@@ -65,20 +65,42 @@ class LLMClient:
             self.model = "deterministic-engine"
             return
 
-        # Check explicit provider
-        if self.provider == "gemini" or (self.provider == "auto" and os.getenv("GEMINI_API_KEY")):
+        # Explicit provider override — honour it directly
+        if self.provider == "gemini":
+            self.model = self.model or "gemini-1.5-flash"
+            return
+        if self.provider == "groq":
+            self.model = self.model or "llama-3.1-70b-versatile"
+            return
+        if self.provider == "openai":
+            self.model = self.model or "gpt-4o-mini"
+            return
+
+        # Auto-detect: prefer env-var hints, then fall back by key prefix heuristics
+        if os.getenv("GEMINI_API_KEY"):
             self.provider = "gemini"
             self.model = self.model or "gemini-1.5-flash"
-        elif self.provider == "groq" or (self.provider == "auto" and os.getenv("GROQ_API_KEY")):
+        elif os.getenv("GROQ_API_KEY"):
             self.provider = "groq"
             self.model = self.model or "llama-3.1-70b-versatile"
-        elif self.provider == "openai" or (self.provider == "auto" and os.getenv("OPENAI_API_KEY")):
+        elif os.getenv("OPENAI_API_KEY"):
             self.provider = "openai"
             self.model = self.model or "gpt-4o-mini"
         else:
-            # Default auto fallback
-            self.provider = "gemini"
-            self.model = self.model or "gemini-1.5-flash"
+            # Key came from session_state or Streamlit secrets — detect by prefix
+            key = self.api_key or ""
+            if key.startswith("sk-") and "-" in key[3:8]:
+                # OpenAI keys start with "sk-"
+                self.provider = "openai"
+                self.model = self.model or "gpt-4o-mini"
+            elif key.startswith("gsk_"):
+                # Groq keys start with "gsk_"
+                self.provider = "groq"
+                self.model = self.model or "llama-3.1-70b-versatile"
+            else:
+                # Default: treat as Gemini (Google AI Studio keys have no fixed prefix)
+                self.provider = "gemini"
+                self.model = self.model or "gemini-1.5-flash"
 
     @property
     def is_configured(self) -> bool:

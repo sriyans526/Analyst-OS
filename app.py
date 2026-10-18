@@ -164,19 +164,25 @@ def main():
             from llm.client import LLMClient
             probe_client = LLMClient()
             if probe_client.is_configured:
-                st.success(f"🟢 Active Provider: {probe_client.provider.title()} ({probe_client.model})")
+                st.success(f"🟢 **Live AI Active!**\nProvider: `{probe_client.provider.title()}` · Model: `{probe_client.model}`")
             else:
-                st.info("🔵 Mode: Offline Analytical Engine (100% Free / Zero API Cost)")
+                st.info("🔵 **Offline Mode** — Deterministic analytical engine\n(100% Free, no API key needed)")
 
             custom_key = st.text_input(
-                "Gemini/OpenAI/Groq API Key (Optional):",
+                "Gemini / OpenAI / Groq API Key (Optional):",
                 type="password",
                 value=st.session_state.get("custom_llm_api_key", ""),
-                help="Enter your API key to activate live cloud LLM reasoning. Leave blank to run offline."
+                help="Paste your key here. Gemini keys (aistudio.google.com) are free. OpenAI keys start with sk-. Groq keys start with gsk_."
             )
             if custom_key != st.session_state.get("custom_llm_api_key", ""):
                 st.session_state["custom_llm_api_key"] = custom_key
                 st.rerun()
+
+            if custom_key:
+                st.caption("✅ Key saved — auto-detecting provider from key prefix.")
+            else:
+                st.caption("💡 Get a free Gemini key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)")
+
 
         st.markdown("---")
         if st.button("🔄 Reset Investigation", use_container_width=True):
