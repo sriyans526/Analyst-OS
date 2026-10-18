@@ -1,0 +1,25 @@
+# Python virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Operating system / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Streamlit secrets (keep config.toml for Cloud deployment)
+.streamlit/secrets.toml
+
+# Environment variables & secrets
+.env
+*.env
