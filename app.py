@@ -115,15 +115,18 @@ def main():
         current_nav = st.session_state.get(KEY_NAV_SELECTION, "Home")
         if current_nav not in nav_options:
             current_nav = "Home"
+            st.session_state[KEY_NAV_SELECTION] = "Home"
+
+        # Synchronize radio button widget state if programmatic navigation was triggered
+        if st.session_state.get("sidebar_nav_radio") != current_nav:
+            st.session_state["sidebar_nav_radio"] = current_nav
 
         nav_choice = st.radio(
             "System Navigation:",
             nav_options,
-            index=nav_options.index(current_nav),
             key="sidebar_nav_radio"
         )
-        if nav_choice != current_nav:
-            st.session_state[KEY_NAV_SELECTION] = nav_choice
+        st.session_state[KEY_NAV_SELECTION] = nav_choice
 
         st.markdown("---")
         st.markdown("### Active Dataset Status")
@@ -153,17 +156,28 @@ def main():
             if file_mb > 50.0:
                 st.sidebar.error("File exceeds 50MB limit.")
             else:
-                curr_name = artifact.filename if artifact else ""
-                if sidebar_file.name != curr_name:
+                st.sidebar.caption(f"Selected: `{sidebar_file.name}` ({file_mb:.2f} MB)")
+                if st.sidebar.button("Load Dataset", key="sidebar_load_file_btn", type="primary", use_container_width=True):
                     try:
-                        new_artifact = load_file_artifact(sidebar_file, filename=sidebar_file.name)
-                        st.session_state[KEY_ACTIVE_ARTIFACT] = new_artifact
-                        if new_artifact.dataframe is not None:
-                            st.session_state["dataset"] = new_artifact.dataframe
-                            st.session_state["dataset_source"] = f"{sidebar_file.name} ({len(new_artifact.dataframe):,} records)"
-                        reset_investigation()
-                        st.sidebar.success(f"Loaded {sidebar_file.name}!")
-                        st.rerun()
+                        import io
+                        sidebar_file.seek(0)
+                        file_bytes = sidebar_file.read()
+                        new_artifact = load_file_artifact(io.BytesIO(file_bytes), filename=sidebar_file.name)
+                        if new_artifact.source_type == "excel":
+                            new_artifact.metadata["raw_bytes"] = file_bytes
+                        if new_artifact.errors:
+                            st.sidebar.error(f"Ingestion failed: {'; '.join(new_artifact.errors)}")
+                        else:
+                            st.session_state[KEY_ACTIVE_ARTIFACT] = new_artifact
+                            if new_artifact.dataframe is not None:
+                                st.session_state["dataset"] = new_artifact.dataframe
+                                st.session_state["dataset_source"] = f"{sidebar_file.name} ({len(new_artifact.dataframe):,} records)"
+                            else:
+                                st.session_state["dataset"] = None
+                                st.session_state["dataset_source"] = f"{sidebar_file.name} ({new_artifact.source_type.upper()})"
+                            reset_investigation()
+                            st.sidebar.success(f"Loaded {sidebar_file.name}!")
+                            st.rerun()
                     except Exception as ex:
                         st.sidebar.error(f"Ingestion failed: {str(ex)}")
 

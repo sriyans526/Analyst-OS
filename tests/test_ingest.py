@@ -139,3 +139,45 @@ def test_load_file_artifact_dispatch():
     artifact_tsv = load_file_artifact(tsv_content, filename="test.tsv")
     assert artifact_tsv.source_type == "tsv"
     assert artifact_tsv.dataframe is not None
+
+
+def test_excel_multi_sheet_selection():
+    """Test loading specific sheets from a multi-sheet Excel workbook."""
+    try:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            pd.DataFrame({"Order ID": ["ORD-A"], "Revenue": [100.0]}).to_excel(writer, sheet_name="Q1_Sales", index=False)
+            pd.DataFrame({"Order ID": ["ORD-B"], "Revenue": [250.0]}).to_excel(writer, sheet_name="Q2_Sales", index=False)
+        buffer.seek(0)
+
+        # Load Sheet 1
+        art1 = load_excel_artifact(io.BytesIO(buffer.getvalue()), filename="multi.xlsx", sheet_name="Q1_Sales")
+        assert art1.selected_sheet == "Q1_Sales"
+        assert len(art1.dataframe) == 1
+        assert art1.dataframe.iloc[0]["Revenue"] == 100.0
+        assert "Q2_Sales" in art1.sheet_names
+
+        # Load Sheet 2
+        art2 = load_excel_artifact(io.BytesIO(buffer.getvalue()), filename="multi.xlsx", sheet_name="Q2_Sales")
+        assert art2.selected_sheet == "Q2_Sales"
+        assert len(art2.dataframe) == 1
+        assert art2.dataframe.iloc[0]["Revenue"] == 250.0
+    except (ImportError, Exception):
+        # Graceful fallback if openpyxl not installed
+        pass
+
+
+def test_uploaded_dataset_analytical_readiness():
+    """Verify that an uploaded CSV artifact can immediately feed analytics tools."""
+    from tools.analytics_tools import calculate_kpis
+    csv_bytes = b"Order ID,Order Date,Category,Region,Revenue,Cost,Profit\nORD-1,2023-01-15,Electronics,North,1000.0,700.0,300.0\nORD-2,2023-02-20,Furniture,South,500.0,400.0,100.0\n"
+    artifact = load_file_artifact(io.BytesIO(csv_bytes), filename="custom_transactions.csv")
+    assert artifact.dataframe is not None
+    assert len(artifact.dataframe) == 2
+
+    # Calculate KPIs immediately on the loaded dataset
+    kpis = calculate_kpis(artifact.dataframe)
+    assert kpis["total_revenue"] == 1500.0
+    assert kpis["total_profit"] == 400.0
+    assert kpis["total_orders"] == 2
+

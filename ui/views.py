@@ -135,13 +135,15 @@ def render_home_view(orchestrator: MultiAgentOrchestrator):
             st.rerun()
 
     with col2:
-        if st.button("Upload Data", use_container_width=True):
+        if st.button("Upload Dataset", use_container_width=True, key="home_upload_dataset_btn"):
             st.session_state[KEY_NAV_SELECTION] = "Data Workspace"
+            st.session_state["sidebar_nav_radio"] = "Data Workspace"
             st.rerun()
 
     with col3:
-        if st.button("Start Investigation", use_container_width=True):
+        if st.button("Start Investigation", use_container_width=True, key="home_start_inv_btn"):
             st.session_state[KEY_NAV_SELECTION] = "AI Investigator"
+            st.session_state["sidebar_nav_radio"] = "AI Investigator"
             st.rerun()
 
     st.write("")
@@ -204,43 +206,70 @@ def render_data_workspace_view():
             if file_mb > 50.0:
                 st.error("File exceeds 50MB safety limit. Please upload a smaller file slice.")
             else:
-                curr_artifact = _get_active_artifact()
-                # If newly uploaded or different
-                if curr_artifact is None or curr_artifact.filename != uploaded_file.name:
-                    with st.spinner(f"Ingesting '{uploaded_file.name}'..."):
-                        raw_bytes = uploaded_file.getvalue()
-                        artifact = load_file_artifact(io.BytesIO(raw_bytes), filename=uploaded_file.name)
+                st.info(f"Selected file: **{uploaded_file.name}** ({file_mb:.2f} MB)")
 
-                        st.session_state[KEY_ACTIVE_ARTIFACT] = artifact
-                        if artifact.dataframe is not None:
-                            st.session_state["dataset"] = artifact.dataframe
-                            st.session_state["dataset_source"] = f"{artifact.filename} ({len(artifact.dataframe):,} records)"
-                        st.session_state[KEY_INVESTIGATION_RESULT] = None
-                        st.success(f"Successfully ingested {uploaded_file.name} as {artifact.source_type.upper()}.")
-                        st.rerun()
+                # If Excel file, inspect available sheets before loading
+                sheet_to_load = None
+                fname_lower = uploaded_file.name.lower()
+                if fname_lower.endswith((".xlsx", ".xls")):
+                    try:
+                        excel_file = pd.ExcelFile(uploaded_file)
+                        sheet_names = excel_file.sheet_names
+                        if len(sheet_names) > 1:
+                            sheet_to_load = st.selectbox(
+                                "Select sheet to import:",
+                                sheet_names,
+                                index=0,
+                                key="upload_sheet_selector"
+                            )
+                        elif sheet_names:
+                            sheet_to_load = sheet_names[0]
+                    except Exception as ex:
+                        st.warning(f"Note: Could not inspect workbook sheets: {ex}")
 
-        # If current artifact is Excel, offer sheet selector
-        curr_artifact = _get_active_artifact()
-        if curr_artifact and curr_artifact.source_type == "excel" and curr_artifact.sheet_names:
-            if len(curr_artifact.sheet_names) > 1:
-                st.markdown("##### Select Sheet from Excel Workbook:")
-                current_sheet_idx = 0
-                if curr_artifact.selected_sheet in curr_artifact.sheet_names:
-                    current_sheet_idx = curr_artifact.sheet_names.index(curr_artifact.selected_sheet)
+                # Clearly visible explicit Load Dataset button
+                if st.button("Load Dataset", type="primary", key="btn_load_workspace_file", use_container_width=True):
+                    with st.spinner(f"Ingesting and validating '{uploaded_file.name}'..."):
+                        try:
+                            uploaded_file.seek(0)
+                            raw_bytes = uploaded_file.read()
 
-                selected_sheet = st.selectbox(
-                    "Available Workbook Sheets:",
-                    curr_artifact.sheet_names,
-                    index=current_sheet_idx,
-                    key="excel_sheet_selector"
-                )
-                if selected_sheet != curr_artifact.selected_sheet and uploaded_file is not None:
-                    if st.button("Switch to Selected Sheet"):
-                        new_art = load_excel_artifact(io.BytesIO(uploaded_file.getvalue()), filename=curr_artifact.filename, sheet_name=selected_sheet)
-                        st.session_state[KEY_ACTIVE_ARTIFACT] = new_art
-                        st.session_state["dataset"] = new_art.dataframe
-                        st.session_state[KEY_INVESTIGATION_RESULT] = None
-                        st.rerun()
+                            if fname_lower.endswith((".xlsx", ".xls")) and sheet_to_load:
+                                artifact = load_excel_artifact(io.BytesIO(raw_bytes), filename=uploaded_file.name, sheet_name=sheet_to_load)
+                            else:
+                                artifact = load_file_artifact(io.BytesIO(raw_bytes), filename=uploaded_file.name)
+
+                            # Cache raw bytes for Excel sheet switching
+                            if fname_lower.endswith((".xlsx", ".xls")):
+                                artifact.metadata["raw_bytes"] = raw_bytes
+
+                            if artifact.errors:
+                                st.error("Failed to load dataset:\n\n" + "\n".join(f"- {e}" for e in artifact.errors))
+                            else:
+                                st.session_state[KEY_ACTIVE_ARTIFACT] = artifact
+                                if artifact.dataframe is not None:
+                                    st.session_state["dataset"] = artifact.dataframe
+                                    st.session_state["dataset_source"] = f"{artifact.filename} ({len(artifact.dataframe):,} records)"
+                                    st.session_state["upload_success_message"] = (
+                                        f"Successfully loaded '{uploaded_file.name}': "
+                                        f"{len(artifact.dataframe):,} rows, {len(artifact.dataframe.columns)} columns."
+                                    )
+                                else:
+                                    st.session_state["dataset"] = None
+                                    st.session_state["dataset_source"] = f"{artifact.filename} ({artifact.source_type.upper()})"
+                                    st.session_state["upload_success_message"] = (
+                                        f"Successfully loaded document '{uploaded_file.name}' ({artifact.page_count or 1} page(s))."
+                                    )
+
+                                from app import reset_investigation
+                                reset_investigation()
+                                st.rerun()
+                        except Exception as ex:
+                            st.error(f"Ingestion failed: {str(ex)}")
+
+        # Display success message if a file was recently loaded
+        if "upload_success_message" in st.session_state:
+            st.success(st.session_state["upload_success_message"])
 
     with tab_synthetic:
         st.markdown("#### Reproducible E-Commerce Benchmark Dataset")
@@ -263,7 +292,9 @@ def render_data_workspace_view():
                     st.session_state[KEY_ACTIVE_ARTIFACT] = synth_art
                     st.session_state["dataset"] = synth_art.dataframe
                     st.session_state["dataset_source"] = f"Synthetic Benchmark ({records_count:,} records, seed={seed_val})"
-                    st.session_state[KEY_INVESTIGATION_RESULT] = None
+                    st.session_state.pop("upload_success_message", None)
+                    from app import reset_investigation
+                    reset_investigation()
                     st.success(f"Generated and loaded {len(synth_art.dataframe):,} records.")
                     st.rerun()
 
@@ -277,12 +308,51 @@ def render_data_workspace_view():
         # Action buttons: Replace or Remove
         b1, b2, _ = st.columns([1, 1, 3])
         with b1:
-            if st.button("Remove Dataset", use_container_width=True):
+            if st.button("Remove Dataset", use_container_width=True, key="btn_remove_dataset"):
                 st.session_state[KEY_ACTIVE_ARTIFACT] = None
                 if "dataset" in st.session_state:
                     del st.session_state["dataset"]
-                st.session_state[KEY_INVESTIGATION_RESULT] = None
+                st.session_state["dataset_source"] = "No active dataset"
+                st.session_state.pop("upload_success_message", None)
+                from app import reset_investigation
+                reset_investigation()
                 st.rerun()
+        with b2:
+            if st.button("Reload Benchmark", use_container_width=True, key="btn_reload_benchmark"):
+                synth = get_synthetic_artifact(num_records=3000, seed=42)
+                st.session_state[KEY_ACTIVE_ARTIFACT] = synth
+                st.session_state["dataset"] = synth.dataframe
+                st.session_state["dataset_source"] = f"Synthetic Benchmark ({len(synth.dataframe):,} records)"
+                st.session_state.pop("upload_success_message", None)
+                from app import reset_investigation
+                reset_investigation()
+                st.rerun()
+
+        # If current active artifact is Excel, offer sheet switcher
+        if active_art.source_type == "excel" and len(active_art.sheet_names) > 1 and active_art.metadata.get("raw_bytes"):
+            st.markdown("##### Switch Sheet in Current Excel Workbook")
+            current_sheet_idx = 0
+            if active_art.selected_sheet in active_art.sheet_names:
+                current_sheet_idx = active_art.sheet_names.index(active_art.selected_sheet)
+
+            selected_sheet = st.selectbox(
+                "Available Workbook Sheets:",
+                active_art.sheet_names,
+                index=current_sheet_idx,
+                key="active_excel_sheet_selector"
+            )
+            if selected_sheet != active_art.selected_sheet:
+                if st.button("Switch to Selected Sheet", key="btn_switch_sheet_loaded"):
+                    raw_bytes = active_art.metadata["raw_bytes"]
+                    new_art = load_excel_artifact(io.BytesIO(raw_bytes), filename=active_art.filename, sheet_name=selected_sheet)
+                    new_art.metadata["raw_bytes"] = raw_bytes
+                    st.session_state[KEY_ACTIVE_ARTIFACT] = new_art
+                    st.session_state["dataset"] = new_art.dataframe
+                    st.session_state["dataset_source"] = f"{new_art.filename} [{selected_sheet}] ({len(new_art.dataframe):,} records)"
+                    st.session_state["upload_success_message"] = f"Switched to sheet '{selected_sheet}' ({len(new_art.dataframe):,} records)."
+                    from app import reset_investigation
+                    reset_investigation()
+                    st.rerun()
 
         # Display errors or warnings if present
         if active_art.errors:
@@ -717,6 +787,7 @@ def render_investigation_history_view():
                 if st.button("Reopen", key=f"reopen_{item.get('id', idx)}", use_container_width=True):
                     st.session_state[KEY_INVESTIGATION_RESULT] = item.get("result")
                     st.session_state[KEY_NAV_SELECTION] = "AI Investigator"
+                    st.session_state["sidebar_nav_radio"] = "AI Investigator"
                     st.rerun()
 
 
