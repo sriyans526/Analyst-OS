@@ -231,3 +231,48 @@ def test_check_numeric_bounds():
     bounds = check_numeric_bounds(df)
     assert bounds["passed"] is False
     assert bounds["issues_found"] == 2
+
+
+def test_superstore_sales_normalization_and_detection():
+    """Verify that classic Superstore Sales dataset columns normalize and detect properly."""
+    from tools.data_tools import detect_dataset_columns
+    from tools.analytics_tools import calculate_kpis
+
+    superstore_df = pd.DataFrame({
+        "Row ID": [1, 2],
+        "Order ID": ["CA-2016-152156", "CA-2016-138688"],
+        "Order Date": ["2016-11-08", "2016-06-12"],
+        "Ship Date": ["2016-11-11", "2016-06-16"],
+        "Customer Name": ["Claire Gute", "Darrin Van Huff"],
+        "Segment": ["Consumer", "Corporate"],
+        "City": ["Henderson", "Los Angeles"],
+        "State": ["Kentucky", "California"],
+        "Region": ["South", "West"],
+        "Product ID": ["FUR-BO-10001798", "OFF-LA-10000240"],
+        "Category": ["Furniture", "Office Supplies"],
+        "Sub-Category": ["Bookcases", "Labels"],
+        "Product Name": ["Bush Somerset Collection Bookcase", "Self-Adhesive Address Labels"],
+        "Sales": [261.96, 14.62],
+        "Quantity": [2, 2],
+        "Discount": [0.0, 0.0],
+        "Profit": [41.91, 6.87]
+    })
+
+    norm_df, mapping = normalize_dataset_columns(superstore_df)
+    assert "Revenue" in norm_df.columns
+    assert "Profit" in norm_df.columns
+    assert "Order Date" in norm_df.columns
+    assert "Category" in norm_df.columns
+    assert "Region" in norm_df.columns
+
+    detection = detect_dataset_columns(norm_df)
+    assert "Revenue" in detection["inferred_roles"]
+    assert "Order Date" in detection["inferred_roles"]
+    assert "Category" in detection["inferred_roles"]
+
+    kpis = calculate_kpis(norm_df)
+    assert kpis["has_revenue"] is True
+    assert kpis["has_profit"] is True
+    assert kpis["total_revenue"] == 276.58
+    assert kpis["total_orders"] == 2
+

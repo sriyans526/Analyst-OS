@@ -213,3 +213,106 @@ def test_load_csv_artifact_semicolon():
     assert artifact.dataframe.iloc[0]["Revenue"] == 500
 
 
+def test_load_cafe_sales_dataset():
+    """Verify schema-independent loading of Cafe Sales dataset with non-standard column names."""
+    from tools.analytics_tools import calculate_kpis
+
+    cafe_csv = (
+        "Transaction ID,Item,Quantity,Price Per Unit,Total Spent,Payment Method,Location,Transaction Date\n"
+        "TX-101,Cappuccino,2,4.50,9.00,Credit Card,Downtown Branch,2023-05-01 08:30:00\n"
+        "TX-102,Croissant,1,3.75,3.75,Cash,Downtown Branch,2023-05-01 09:15:00\n"
+        "TX-103,Iced Latte,3,5.00,15.00,Mobile App,Uptown Mall,2023-05-01 10:00:00\n"
+    )
+    artifact = load_csv_artifact(io.StringIO(cafe_csv), filename="cafe_sales.csv")
+
+    assert len(artifact.errors) == 0
+    assert artifact.dataframe is not None
+    assert len(artifact.dataframe) == 3
+
+    # Normalized canonical columns should be present
+    assert "Revenue" in artifact.dataframe.columns
+    assert "Quantity" in artifact.dataframe.columns
+    assert "Unit Price" in artifact.dataframe.columns
+    assert "Order ID" in artifact.dataframe.columns
+    assert "Product Name" in artifact.dataframe.columns
+    assert "Region" in artifact.dataframe.columns
+
+    # Verify analytical KPIs can be computed directly
+    kpis = calculate_kpis(artifact.dataframe)
+    assert kpis["total_revenue"] == 27.75
+    assert kpis["total_units"] == 6
+    assert kpis["total_orders"] == 3
+    assert kpis["has_revenue"] is True
+
+
+def test_load_dataset_without_sales_metrics():
+    """Verify that a dataset without sales columns loads successfully without critical errors."""
+    from tools.analytics_tools import calculate_kpis
+
+    hr_csv = (
+        "Employee ID,Department,Role,Tenure Years,Performance Score\n"
+        "EMP-01,Engineering,Software Engineer,3,4.5\n"
+        "EMP-02,Marketing,Content Specialist,1,4.2\n"
+        "EMP-03,HR,Generalist,5,4.8\n"
+    )
+    artifact = load_csv_artifact(io.StringIO(hr_csv), filename="employee_records.csv")
+
+    assert len(artifact.errors) == 0
+    assert artifact.dataframe is not None
+    assert len(artifact.dataframe) == 3
+    # Check that a warning was emitted regarding missing financial metrics
+    assert any("sales" in w.lower() or "revenue" in w.lower() for w in artifact.warnings)
+
+    # Verify KPIs handle unmapped columns without fabricating $0 as valid revenue
+    kpis = calculate_kpis(artifact.dataframe)
+    assert kpis["has_revenue"] is False
+    assert kpis["has_profit"] is False
+    assert kpis["total_orders"] == 3
+
+
+def test_apply_user_column_mapping_and_derivations():
+    """Verify user column mapping and automatic metric derivations."""
+    from tools.data_tools import apply_user_column_mapping
+    from tools.analytics_tools import calculate_kpis
+
+    raw_df = pd.DataFrame({
+        "Trans_Number": ["T1", "T2"],
+        "Menu_Item": ["Espresso", "Muffin"],
+        "Units": [3, 2],
+        "Rate": ["$3.00", "$4.50"],
+        "Item_Cost": [1.50, 2.00]
+    })
+
+    mapping = {
+        "Order ID": "Trans_Number",
+        "Product Name": "Menu_Item",
+        "Quantity": "Units",
+        "Unit Price": "Rate",
+        "Cost": "Item_Cost"
+    }
+
+    updated_df, changes = apply_user_column_mapping(raw_df, mapping)
+
+    # Check renamed columns
+    assert "Order ID" in updated_df.columns
+    assert "Product Name" in updated_df.columns
+    assert "Quantity" in updated_df.columns
+    assert "Unit Price" in updated_df.columns
+    assert "Cost" in updated_df.columns
+
+    # Check auto-derived Revenue: (3 * 3.0) and (2 * 4.5) = 9.0 and 9.0 -> 18.0
+    assert "Revenue" in updated_df.columns
+    assert float(updated_df["Revenue"].sum()) == 18.0
+
+    # Check auto-derived Profit: Revenue - Cost = (9 - 1.5) and (9 - 2) = 7.5 + 7.0 = 14.5
+    assert "Profit" in updated_df.columns
+    assert float(updated_df["Profit"].sum()) == 14.5
+
+    kpis = calculate_kpis(updated_df)
+    assert kpis["has_revenue"] is True
+    assert kpis["has_profit"] is True
+    assert kpis["total_revenue"] == 18.0
+    assert kpis["total_profit"] == 14.5
+
+
+

@@ -31,15 +31,20 @@ def calculate_kpis(df: pd.DataFrame) -> Dict[str, Any]:
             "average_profit_per_order": 0.0,
         }
 
-    total_revenue = float(df["Revenue"].sum()) if "Revenue" in df.columns else 0.0
-    total_cost = float(df["Cost"].sum()) if "Cost" in df.columns else 0.0
-    total_profit = float(df["Profit"].sum()) if "Profit" in df.columns else (total_revenue - total_cost)
-    total_orders = int(df["Order ID"].nunique()) if "Order ID" in df.columns else int(len(df))
-    total_units = int(df["Quantity"].sum()) if "Quantity" in df.columns else 0
+    has_revenue = "Revenue" in df.columns and pd.api.types.is_numeric_dtype(df["Revenue"])
+    has_cost = "Cost" in df.columns and pd.api.types.is_numeric_dtype(df["Cost"])
+    has_profit = "Profit" in df.columns and pd.api.types.is_numeric_dtype(df["Profit"])
+    has_quantity = "Quantity" in df.columns and pd.api.types.is_numeric_dtype(df["Quantity"])
 
-    margin_pct = round((total_profit / total_revenue) * 100, 2) if total_revenue != 0 else 0.0
-    aov = round(total_revenue / total_orders, 2) if total_orders > 0 else 0.0
-    avg_profit_order = round(total_profit / total_orders, 2) if total_orders > 0 else 0.0
+    total_revenue = float(df["Revenue"].sum()) if has_revenue else 0.0
+    total_cost = float(df["Cost"].sum()) if has_cost else 0.0
+    total_profit = float(df["Profit"].sum()) if has_profit else (total_revenue - total_cost if has_revenue and has_cost else 0.0)
+    total_orders = int(df["Order ID"].nunique()) if "Order ID" in df.columns else int(len(df))
+    total_units = int(df["Quantity"].sum()) if has_quantity else 0
+
+    margin_pct = round((total_profit / total_revenue) * 100, 2) if total_revenue != 0 and has_revenue and (has_profit or has_cost) else 0.0
+    aov = round(total_revenue / total_orders, 2) if total_orders > 0 and has_revenue else 0.0
+    avg_profit_order = round(total_profit / total_orders, 2) if total_orders > 0 and (has_profit or has_cost) else 0.0
 
     return {
         "total_revenue": round(total_revenue, 2),
@@ -50,6 +55,10 @@ def calculate_kpis(df: pd.DataFrame) -> Dict[str, Any]:
         "total_units": total_units,
         "average_order_value": aov,
         "average_profit_per_order": avg_profit_order,
+        "has_revenue": has_revenue,
+        "has_cost": has_cost,
+        "has_profit": has_profit or (has_revenue and has_cost),
+        "has_quantity": has_quantity,
     }
 
 

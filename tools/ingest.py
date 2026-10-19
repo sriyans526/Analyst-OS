@@ -69,6 +69,12 @@ def _populate_df_metadata(artifact: DatasetArtifact) -> DatasetArtifact:
     except Exception as ex:
         artifact.warnings.append(f"Integrity audit warning: {str(ex)}")
 
+    try:
+        from tools.data_tools import detect_dataset_columns
+        artifact.metadata["detected_columns"] = detect_dataset_columns(artifact.dataframe)
+    except Exception:
+        pass
+
     return artifact
 
 

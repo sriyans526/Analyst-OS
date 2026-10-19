@@ -73,11 +73,9 @@ def init_session_state():
         st.session_state[KEY_NAV_SELECTION] = "Home"
 
     if KEY_ACTIVE_ARTIFACT not in st.session_state:
-        # Load default synthetic sales benchmark
-        synth_artifact = get_synthetic_artifact(num_records=3000, seed=42)
-        st.session_state[KEY_ACTIVE_ARTIFACT] = synth_artifact
-        st.session_state["dataset"] = synth_artifact.dataframe
-        st.session_state["dataset_source"] = f"Synthetic Benchmark ({len(synth_artifact.dataframe):,} records)"
+        st.session_state[KEY_ACTIVE_ARTIFACT] = None
+        st.session_state["dataset"] = None
+        st.session_state["dataset_source"] = "No active dataset"
 
 
 def main():
@@ -112,14 +110,19 @@ def main():
         st.caption("Autonomous Multi-Agent Analytical System")
         st.markdown("---")
 
-        current_nav = st.session_state.get(KEY_NAV_SELECTION, "Home")
-        if current_nav not in nav_options:
-            current_nav = "Home"
+        if KEY_NAV_SELECTION not in st.session_state or st.session_state[KEY_NAV_SELECTION] not in nav_options:
             st.session_state[KEY_NAV_SELECTION] = "Home"
 
-        # Synchronize radio button widget state if programmatic navigation was triggered
-        if st.session_state.get("sidebar_nav_radio") != current_nav:
-            st.session_state["sidebar_nav_radio"] = current_nav
+        # Check if user explicitly clicked the sidebar radio in this run
+        user_clicked_radio = False
+        if "sidebar_nav_radio" in st.session_state and st.session_state["sidebar_nav_radio"] in nav_options:
+            if st.session_state.get("_last_sidebar_nav") != st.session_state["sidebar_nav_radio"]:
+                user_clicked_radio = True
+                st.session_state[KEY_NAV_SELECTION] = st.session_state["sidebar_nav_radio"]
+
+        # If user did not just click the radio, ensure radio matches KEY_NAV_SELECTION
+        if not user_clicked_radio:
+            st.session_state["sidebar_nav_radio"] = st.session_state[KEY_NAV_SELECTION]
 
         nav_choice = st.radio(
             "System Navigation:",
@@ -127,6 +130,7 @@ def main():
             key="sidebar_nav_radio"
         )
         st.session_state[KEY_NAV_SELECTION] = nav_choice
+        st.session_state["_last_sidebar_nav"] = nav_choice
 
         st.markdown("---")
         st.markdown("### Active Dataset Status")
@@ -134,7 +138,7 @@ def main():
             st.markdown(f"**Source:** `{artifact.filename}`")
             st.markdown(f"**Format:** `{artifact.source_type.upper()}`")
             st.markdown(f"**Rows:** `{len(df):,}` | **Cols:** `{len(df.columns)}`")
-            if "Revenue" in df.columns:
+            if "Revenue" in df.columns and pd.api.types.is_numeric_dtype(df["Revenue"]):
                 st.markdown(f"**Total GMV:** `${df['Revenue'].sum():,.0f}`")
         elif artifact is not None:
             st.markdown(f"**Source:** `{artifact.filename}` ({artifact.source_type.upper()})")

@@ -226,7 +226,7 @@ class LLMClient:
         """
         if context:
             return (
-                f"### 🤖 AnalystOS AI Investigation Intelligence\n\n"
+                f"### AnalystOS AI Investigation Intelligence\n\n"
                 f"Based on verified empirical calculations from your active dataset:\n\n"
                 f"{context}\n\n"
                 f"**Recommendation Summary:**\n"

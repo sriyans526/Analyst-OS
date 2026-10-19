@@ -13,6 +13,8 @@ from .data_tools import (
     detect_missing_values,
     detect_duplicates,
     validate_and_parse_dates,
+    detect_dataset_columns,
+    apply_user_column_mapping,
 )
 from .validation_tools import (
     validate_dataset_integrity,

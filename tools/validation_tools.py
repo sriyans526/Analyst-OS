@@ -158,8 +158,12 @@ def validate_dataset_integrity(df: pd.DataFrame) -> Dict[str, Any]:
     )
 
     if not has_revenue and not has_qty_price:
-        critical_errors.append("Dataset lacks sales data: neither 'Revenue' nor ('Quantity' + 'Unit Price') found.")
-        score -= 50.0
+        warnings.append(
+            "Financial sales metrics ('Revenue' or 'Quantity' + 'Unit Price') not detected in dataset. "
+            "General profiling, distributions, category comparisons, and custom column mappings remain enabled, "
+            "but revenue and profit metrics will be unavailable until mapped."
+        )
+        score -= 15.0
 
     # Missing standard columns check
     missing_standard = [col for col in STANDARD_COLUMNS if col not in df.columns]

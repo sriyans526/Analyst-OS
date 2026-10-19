@@ -38,7 +38,7 @@ class AIInvestigator:
         """
         if df is None or df.empty:
             return {
-                "response": "⚠️ No dataset is currently loaded. Please upload a CSV file or load the benchmark dataset in **Data Management** to begin our investigation.",
+                "response": "No dataset is currently loaded. Please upload a dataset or load the benchmark dataset in the Data Workspace to begin our investigation.",
                 "provider": "AnalystOS System",
                 "model": "offline",
                 "is_real_llm": False
@@ -49,13 +49,20 @@ class AIInvestigator:
         cat_df = analyze_category_performance(df)
         monthly_df = calculate_monthly_trends(df)
 
-        context_lines = [
-            f"- Total Revenue: ${kpis.get('total_revenue', 0.0):,.2f}",
-            f"- Total Net Profit: ${kpis.get('total_profit', 0.0):,.2f}",
-            f"- Overall Profit Margin: {kpis.get('profit_margin_pct', 0.0)}%",
-            f"- Total Orders: {kpis.get('total_orders', 0):,}",
-            f"- Average Order Value: ${kpis.get('average_order_value', 0.0):,.2f}"
-        ]
+        context_lines = []
+        if kpis.get("has_revenue"):
+            context_lines.append(f"- Total Revenue: ${kpis.get('total_revenue', 0.0):,.2f}")
+            context_lines.append(f"- Average Order Value: ${kpis.get('average_order_value', 0.0):,.2f}")
+        else:
+            context_lines.append("- Total Revenue: Unavailable (Revenue column not mapped)")
+
+        if kpis.get("has_profit"):
+            context_lines.append(f"- Total Net Profit: ${kpis.get('total_profit', 0.0):,.2f}")
+            context_lines.append(f"- Overall Profit Margin: {kpis.get('profit_margin_pct', 0.0)}%")
+        else:
+            context_lines.append("- Total Net Profit: Unavailable (Profit/Cost columns not mapped)")
+
+        context_lines.append(f"- Total Orders / Transactions: {kpis.get('total_orders', 0):,}")
 
         if not cat_df.empty:
             context_lines.append("\nCategory Breakdown:")

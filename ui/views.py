@@ -27,6 +27,12 @@ from tools.ingest import (
     load_excel_artifact,
     get_synthetic_artifact,
 )
+from tools.data_tools import (
+    detect_dataset_columns,
+    apply_user_column_mapping,
+    inspect_schema,
+)
+from tools.validation_tools import validate_dataset_integrity
 from tools.analytics_tools import (
     calculate_kpis,
     calculate_monthly_trends,
@@ -56,6 +62,13 @@ KEY_CHART_SPECS = "chart_specs"
 KEY_REPORT_BYTES = "report_bytes"
 KEY_LLM_API_KEY = "llm_api_key"
 KEY_NAV_SELECTION = "system_navigation_selection"
+
+
+def navigate_to(page: str):
+    """Programmatically transition to a system navigation page."""
+    st.session_state[KEY_NAV_SELECTION] = page
+    st.session_state["sidebar_nav_radio"] = page
+    st.rerun()
 
 
 def _get_active_artifact() -> Optional[DatasetArtifact]:
@@ -136,15 +149,11 @@ def render_home_view(orchestrator: MultiAgentOrchestrator):
 
     with col2:
         if st.button("Upload Dataset", use_container_width=True, key="home_upload_dataset_btn"):
-            st.session_state[KEY_NAV_SELECTION] = "Data Workspace"
-            st.session_state["sidebar_nav_radio"] = "Data Workspace"
-            st.rerun()
+            navigate_to("Data Workspace")
 
     with col3:
         if st.button("Start Investigation", use_container_width=True, key="home_start_inv_btn"):
-            st.session_state[KEY_NAV_SELECTION] = "AI Investigator"
-            st.session_state["sidebar_nav_radio"] = "AI Investigator"
-            st.rerun()
+            navigate_to("AI Investigator")
 
     st.write("")
 
@@ -385,6 +394,94 @@ def render_data_workspace_view():
                     })
                 st.dataframe(pd.DataFrame(col_data), use_container_width=True)
 
+            with st.expander("Data Configuration & Column Mapping", expanded=True):
+                st.markdown("#### Detected Columns & Inferred Semantic Meanings")
+                st.markdown(
+                    "AnalystOS automatically analyzes column data types and infers potential business roles. "
+                    "Review detected fields below and confirm or adjust mappings to canonical AnalystOS metrics."
+                )
+
+                detected_info = active_art.metadata.get("detected_columns")
+                if not detected_info or not isinstance(detected_info, dict) or "columns" not in detected_info:
+                    detected_info = detect_dataset_columns(df)
+                    active_art.metadata["detected_columns"] = detected_info
+
+                col_meta = detected_info.get("columns", {})
+                inferred_roles = detected_info.get("inferred_roles", {})
+
+                if col_meta:
+                    det_rows = []
+                    for c_name, c_props in col_meta.items():
+                        samples_str = ", ".join(c_props.get("samples", [])[:2])
+                        det_rows.append({
+                            "Dataset Column": c_name,
+                            "Detected Type": c_props.get("type", "General"),
+                            "Inferred Role": c_props.get("inferred_role", "General Field"),
+                            "Sample Values": samples_str
+                        })
+                    st.dataframe(pd.DataFrame(det_rows), use_container_width=True, hide_index=True)
+
+                st.write("")
+                st.markdown("#### Canonical AnalystOS Metric Mapping")
+                st.caption(
+                    "Map your dataset's columns to standard AnalystOS analytical fields. "
+                    "If Revenue is not mapped but Quantity and Unit Price are, Revenue will be auto-calculated. "
+                    "If Profit is not mapped but Revenue and Cost are, Profit will be auto-calculated."
+                )
+
+                canonical_fields = [
+                    ("Revenue", "Top-line revenue / sales amount (e.g. Total Spent, Sales, Amount, Total)"),
+                    ("Quantity", "Volume or item count sold (e.g. Quantity, Qty, Units Sold)"),
+                    ("Unit Price", "Price per unit or product rate (e.g. Price, Unit Price, Rate)"),
+                    ("Cost", "Total product or operational cost (e.g. Cost, Total Cost, Expenses)"),
+                    ("Profit", "Net bottom-line profit or margin amount (e.g. Profit, Net Profit)"),
+                    ("Order Date", "Date or timestamp of transaction (e.g. Transaction Date, Date)"),
+                    ("Category", "Product category, type, or department (e.g. Category, Dept)"),
+                    ("Region", "Geographic market, store, or location (e.g. Location, Region, City)"),
+                    ("Product Name", "Product or item description (e.g. Item, Product Name, SKU)")
+                ]
+
+                col_choices = ["[Not Mapped]"] + list(df.columns)
+                user_mapping = {}
+
+                c_m1, c_m2, c_m3 = st.columns(3)
+                mapping_cols = [c_m1, c_m2, c_m3]
+
+                for idx, (canonical, help_text) in enumerate(canonical_fields):
+                    target_ui_col = mapping_cols[idx % 3]
+                    with target_ui_col:
+                        default_idx = 0
+                        if canonical in df.columns:
+                            default_idx = col_choices.index(canonical)
+                        elif canonical in inferred_roles and inferred_roles[canonical] in col_choices:
+                            default_idx = col_choices.index(inferred_roles[canonical])
+
+                        selected_col = st.selectbox(
+                            f"**{canonical}**",
+                            options=col_choices,
+                            index=default_idx,
+                            help=help_text,
+                            key=f"col_map_select_{canonical}"
+                        )
+                        if selected_col != "[Not Mapped]":
+                            user_mapping[canonical] = selected_col
+
+                st.write("")
+                if st.button("Apply Column Mapping", type="primary", key="btn_apply_col_mapping"):
+                    updated_df, changes = apply_user_column_mapping(df, user_mapping)
+                    active_art.dataframe = updated_df
+                    active_art.schema = inspect_schema(updated_df)
+                    active_art.validation_report = validate_dataset_integrity(updated_df)
+                    active_art.metadata["detected_columns"] = detect_dataset_columns(updated_df)
+                    if "column_mapping" not in active_art.metadata:
+                        active_art.metadata["column_mapping"] = {}
+                    active_art.metadata["column_mapping"].update(changes)
+
+                    st.session_state["dataset"] = updated_df
+                    changes_desc = ", ".join(f"{k} -> {v}" for k, v in changes.items()) if changes else "Mappings verified."
+                    st.session_state["upload_success_message"] = f"Column mapping successfully applied: {changes_desc}"
+                    st.rerun()
+
             with st.expander("Data Preview (First 20 Rows)", expanded=True):
                 st.dataframe(df.head(20), use_container_width=True)
 
@@ -600,7 +697,24 @@ def render_analytics_dashboard_view():
     _render_active_dataset_banner(artifact)
 
     if artifact is None or artifact.dataframe is None or artifact.dataframe.empty:
-        st.info("No active tabular dataset loaded. Please navigate to the Data Workspace to upload or load data.")
+        with st.container(border=True):
+            st.markdown("### No Tabular Dataset Active")
+            st.markdown(
+                "The Analytics Dashboard requires an active dataset with structured records. "
+                "You can upload your custom transaction file or load our pre-configured e-commerce benchmark."
+            )
+            col_b1, col_b2, _ = st.columns([1, 1, 2])
+            with col_b1:
+                if st.button("Go to Data Workspace", type="primary", key="dash_goto_workspace_btn"):
+                    navigate_to("Data Workspace")
+            with col_b2:
+                if st.button("Load Demo Benchmark", key="dash_load_benchmark_btn"):
+                    synth = get_synthetic_artifact(num_records=3000, seed=42)
+                    st.session_state[KEY_ACTIVE_ARTIFACT] = synth
+                    st.session_state["dataset"] = synth.dataframe
+                    st.session_state["dataset_source"] = f"Synthetic Benchmark ({len(synth.dataframe):,} records)"
+                    st.session_state[KEY_INVESTIGATION_RESULT] = None
+                    st.rerun()
         return
 
     df = artifact.dataframe
@@ -636,43 +750,105 @@ def render_analytics_dashboard_view():
     if selected_reg != "All":
         filtered_df = filtered_df[filtered_df["Region"] == selected_reg]
 
-    # KPI Summary Cards (only if relevant columns exist)
+    # KPI Summary Cards (only display metrics if available)
     kpis = calculate_kpis(filtered_df)
     k_cols = st.columns(5)
     with k_cols[0]:
-        st.metric("Total Revenue", f"${kpis['total_revenue']:,.0f}")
+        if kpis.get("has_revenue"):
+            st.metric("Total Revenue", f"${kpis['total_revenue']:,.0f}")
+        else:
+            st.metric("Total Revenue", "Unavailable", help="Revenue column not identified or mapped in dataset.")
     with k_cols[1]:
-        st.metric("Net Profit", f"${kpis['total_profit']:,.0f}")
+        if kpis.get("has_profit"):
+            st.metric("Net Profit", f"${kpis['total_profit']:,.0f}")
+        else:
+            st.metric("Net Profit", "Unavailable", help="Profit / Cost column not identified or mapped in dataset.")
     with k_cols[2]:
-        st.metric("Profit Margin", f"{kpis['profit_margin_pct']}%")
+        if kpis.get("has_revenue") and kpis.get("has_profit"):
+            st.metric("Profit Margin", f"{kpis['profit_margin_pct']}%")
+        else:
+            st.metric("Profit Margin", "Unavailable", help="Margin requires mapped Revenue and Profit/Cost.")
     with k_cols[3]:
         st.metric("Total Orders", f"{kpis['total_orders']:,}")
     with k_cols[4]:
-        st.metric("Avg Order Value", f"${kpis['average_order_value']:,.1f}")
+        if kpis.get("has_revenue"):
+            st.metric("Avg Order Value", f"${kpis['average_order_value']:,.1f}")
+        else:
+            st.metric("Avg Order Value", "Unavailable", help="Requires mapped Revenue column.")
 
     st.write("")
 
     # Visualizations Grid
     has_date = "Order Date" in filtered_df.columns or any("date" in c.lower() for c in filtered_df.columns)
     if has_date:
-        monthly_df = calculate_monthly_trends(filtered_df)
-        st.plotly_chart(create_monthly_trend_chart(monthly_df), use_container_width=True)
+        date_col = "Order Date" if "Order Date" in filtered_df.columns else [c for c in filtered_df.columns if "date" in c.lower()][0]
+        monthly_df = calculate_monthly_trends(filtered_df, date_column=date_col)
+        if not monthly_df.empty:
+            if kpis.get("has_revenue") or kpis.get("has_profit"):
+                st.plotly_chart(create_monthly_trend_chart(monthly_df), use_container_width=True)
+            else:
+                fig_orders = px.line(
+                    monthly_df,
+                    x="Month",
+                    y="orders",
+                    markers=True,
+                    title="Monthly Activity / Transaction Volume"
+                )
+                fig_orders.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
+                st.plotly_chart(fig_orders, use_container_width=True)
+    else:
+        st.caption("Note: Date column not detected. Monthly trend chart is unavailable.")
 
     g1, g2 = st.columns(2)
     with g1:
         if has_cat:
             cat_df = analyze_category_performance(filtered_df)
-            st.plotly_chart(create_category_margin_chart(cat_df), use_container_width=True)
+            if not cat_df.empty and (kpis.get("has_revenue") or kpis.get("has_profit")):
+                st.plotly_chart(create_category_margin_chart(cat_df), use_container_width=True)
+            elif not cat_df.empty:
+                cat_counts = filtered_df["Category"].value_counts().reset_index()
+                cat_counts.columns = ["Category", "Count"]
+                fig_cat_count = px.bar(cat_counts.head(10), x="Category", y="Count", title="Top Categories by Record Count")
+                fig_cat_count.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
+                st.plotly_chart(fig_cat_count, use_container_width=True)
+        else:
+            potential_cats = [c for c in filtered_df.columns if filtered_df[c].dtype == "object" and filtered_df[c].nunique() <= 50]
+            if potential_cats:
+                sample_cat = potential_cats[0]
+                cat_counts = filtered_df[sample_cat].value_counts().reset_index()
+                cat_counts.columns = [sample_cat, "Count"]
+                fig_alt = px.bar(cat_counts.head(10), x=sample_cat, y="Count", title=f"Distribution by {sample_cat} (Categorical)")
+                fig_alt.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
+                st.plotly_chart(fig_alt, use_container_width=True)
+            else:
+                st.caption("Category breakdown unavailable (no categorical column mapped).")
+
     with g2:
         if has_reg:
             reg_df = analyze_regional_performance(filtered_df)
-            st.plotly_chart(create_regional_chart(reg_df), use_container_width=True)
+            if not reg_df.empty and (kpis.get("has_revenue") or kpis.get("has_profit")):
+                st.plotly_chart(create_regional_chart(reg_df), use_container_width=True)
+            elif not reg_df.empty:
+                reg_counts = filtered_df["Region"].value_counts().reset_index()
+                reg_counts.columns = ["Region", "Count"]
+                fig_reg_count = px.bar(reg_counts.head(10), x="Region", y="Count", title="Top Locations / Regions by Count")
+                fig_reg_count.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
+                st.plotly_chart(fig_reg_count, use_container_width=True)
+        else:
+            st.caption("Regional breakdown unavailable (Region / Location column not mapped).")
 
-    if "Product Name" in filtered_df.columns or "Product ID" in filtered_df.columns:
+    if ("Product Name" in filtered_df.columns or "Product ID" in filtered_df.columns) and (kpis.get("has_revenue") or kpis.get("has_profit")):
         prod_perf = analyze_product_performance(filtered_df, top_n=5)
         st.plotly_chart(create_product_profit_chart(prod_perf), use_container_width=True)
+    elif "Product Name" in filtered_df.columns or "Product ID" in filtered_df.columns:
+        p_col = "Product Name" if "Product Name" in filtered_df.columns else "Product ID"
+        top_items = filtered_df[p_col].value_counts().head(10).reset_index()
+        top_items.columns = [p_col, "Transactions"]
+        fig_items = px.bar(top_items, x=p_col, y="Transactions", title=f"Top 10 {p_col} by Frequency")
+        fig_items.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
+        st.plotly_chart(fig_items, use_container_width=True)
 
-    # General dataset charts: correlation heatmap & missing values
+    # General dataset charts: correlation heatmap & distributions & missing values
     numeric_df = filtered_df.select_dtypes(include=["number"])
     if len(numeric_df.columns) > 1:
         with st.expander("Correlation Heatmap (Numeric Columns)", expanded=False):
@@ -680,6 +856,19 @@ def render_analytics_dashboard_view():
             fig_corr = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", title="Correlation Matrix")
             fig_corr.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
             st.plotly_chart(fig_corr, use_container_width=True)
+
+    if not numeric_df.empty:
+        with st.expander("Numeric Column Distributions & Statistics", expanded=False):
+            st.dataframe(numeric_df.describe().round(2).T, use_container_width=True)
+
+    null_counts = filtered_df.isna().sum()
+    if null_counts.sum() > 0:
+        with st.expander("Missing Value Analysis", expanded=False):
+            null_df = pd.DataFrame({"Column": null_counts.index, "Missing Values": null_counts.values})
+            null_df = null_df[null_df["Missing Values"] > 0].sort_values("Missing Values", ascending=False)
+            fig_null = px.bar(null_df, x="Column", y="Missing Values", title="Missing Values per Column")
+            fig_null.update_layout(plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF")
+            st.plotly_chart(fig_null, use_container_width=True)
 
     # Operational Anomalies
     anomalies = detect_anomalies_and_changes(filtered_df)
@@ -786,9 +975,7 @@ def render_investigation_history_view():
             with col_btn:
                 if st.button("Reopen", key=f"reopen_{item.get('id', idx)}", use_container_width=True):
                     st.session_state[KEY_INVESTIGATION_RESULT] = item.get("result")
-                    st.session_state[KEY_NAV_SELECTION] = "AI Investigator"
-                    st.session_state["sidebar_nav_radio"] = "AI Investigator"
-                    st.rerun()
+                    navigate_to("AI Investigator")
 
 
 # ==============================================================================

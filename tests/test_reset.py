@@ -52,3 +52,30 @@ def test_reset_investigation_clears_expected_keys():
         assert mock_state[KEY_ACTIVE_ARTIFACT] == synth_artifact
         assert mock_state["dataset"] is not None
         assert mock_state[KEY_LLM_API_KEY] == "test-key-12345"
+
+
+def test_init_session_state_starts_empty():
+    """Verify that AnalystOS starts with an empty dashboard and no active dataset."""
+    from app import init_session_state, KEY_NAV_SELECTION
+    mock_state = {}
+    with patch("app.st.session_state", mock_state):
+        init_session_state()
+        assert mock_state[KEY_ACTIVE_ARTIFACT] is None
+        assert mock_state["dataset"] is None
+        assert mock_state["dataset_source"] == "No active dataset"
+        assert mock_state[KEY_NAV_SELECTION] == "Home"
+
+
+def test_navigation_state_synchronization():
+    """Verify that programmatic navigation sets both KEY_NAV_SELECTION and sidebar_nav_radio."""
+    from ui.views import navigate_to, KEY_NAV_SELECTION
+    mock_state = {}
+    with patch("ui.views.st.session_state", mock_state), patch("ui.views.st.rerun"):
+        navigate_to("Data Workspace")
+        assert mock_state[KEY_NAV_SELECTION] == "Data Workspace"
+        assert mock_state["sidebar_nav_radio"] == "Data Workspace"
+
+        navigate_to("Analytics Dashboard")
+        assert mock_state[KEY_NAV_SELECTION] == "Analytics Dashboard"
+        assert mock_state["sidebar_nav_radio"] == "Analytics Dashboard"
+

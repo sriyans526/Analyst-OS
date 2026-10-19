@@ -15,51 +15,73 @@ import pandas as pd
 
 COLUMN_ALIASES = {
     "Order ID": [
-        "order_id", "order id", "orderid", "order_number", "ord_id", "transaction_id", "id", "trans_id"
+        "order_id", "order id", "orderid", "order_number", "ord_id", "transaction_id", "trans_id",
+        "id", "bill_id", "invoice_id", "bill_number", "bill_no", "invoice_no", "receipt_id", "receipt_no"
     ],
     "Order Date": [
-        "order_date", "order date", "orderdate", "date", "timestamp", "datetime", "sale_date", "trans_date"
+        "order_date", "order date", "orderdate", "date", "timestamp", "datetime", "sale_date", "trans_date",
+        "transaction_date", "bill_date", "time", "created_at", "trans_time", "sale_time"
     ],
     "Product ID": [
-        "product_id", "product id", "productid", "item_id", "sku", "prod_id"
+        "product_id", "product id", "productid", "item_id", "sku", "prod_id", "menu_id", "item_code", "product_code"
     ],
     "Product Name": [
-        "product_name", "product name", "productname", "product", "item_name", "item", "title", "name", "description"
+        "product_name", "product name", "productname", "product", "item_name", "item", "title", "name",
+        "description", "menu_item", "dish", "sku_name", "item_description", "product_description"
     ],
     "Category": [
-        "category", "product_category", "dept", "department", "type", "category_name"
+        "category", "product_category", "dept", "department", "type", "category_name", "item_category",
+        "menu_category", "group", "class", "product_type", "item_type"
     ],
     "Customer ID": [
-        "customer_id", "customer id", "customerid", "cust_id", "client_id", "user_id"
+        "customer_id", "customer id", "customerid", "cust_id", "client_id", "user_id", "customer",
+        "client", "buyer", "customer_name", "member_id"
     ],
     "Region": [
-        "region", "territory", "zone", "location", "market", "area", "state", "city", "country"
+        "region", "territory", "zone", "location", "market", "area", "state", "city", "country",
+        "store", "store_location", "branch", "outlet", "outlet_location"
     ],
     "Quantity": [
-        "quantity", "qty", "units", "volume", "count", "items_sold"
+        "quantity", "qty", "units", "volume", "count", "items_sold", "units_sold", "quantity_sold",
+        "items", "num_items", "item_qty", "order_quantity"
     ],
     "Unit Price": [
-        "unit_price", "unit price", "unitprice", "price", "selling_price", "sales_price", "retail_price"
+        "unit_price", "unit price", "unitprice", "price", "selling_price", "sales_price", "retail_price",
+        "rate", "price_per_unit", "item_price", "menu_price", "unit_rate"
     ],
     "Unit Cost": [
-        "unit_cost", "unit cost", "unitcost", "cost_price", "base_cost"
+        "unit_cost", "unit cost", "unitcost", "cost_price", "base_cost", "cost_per_unit", "cost_rate"
     ],
     "Revenue": [
-        "revenue", "sales", "total_sales", "total_revenue", "amount", "total_amount", "gmv", "gross_sales"
+        "revenue", "sales", "total_sales", "total_revenue", "amount", "total_amount", "gmv", "gross_sales",
+        "total", "total_spent", "spent", "bill_amount", "subtotal", "grand_total", "price_total",
+        "turnover", "net_sales", "transaction_amount", "line_total", "amount_spent"
     ],
     "Cost": [
-        "cost", "total_cost", "cogs", "expenses"
+        "cost", "total_cost", "cogs", "expenses", "expense", "total_expense"
     ],
     "Profit": [
-        "profit", "net_profit", "earnings", "gross_profit", "margin_amount"
+        "profit", "net_profit", "earnings", "gross_profit", "margin_amount", "net_margin"
+    ],
+    "Payment Method": [
+        "payment_method", "payment_mode", "payment_type", "payment", "tender", "pay_mode", "card_type"
     ]
 }
+
+
+def _coerce_numeric_series(series: pd.Series) -> pd.Series:
+    """Safely convert currency/formatted string numbers into float series."""
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
+    cleaned = series.astype(str).str.replace(r"[\$,\s€£₹]", "", regex=True)
+    return pd.to_numeric(cleaned, errors="coerce")
 
 
 def normalize_dataset_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
     Intelligently map uploaded DataFrame columns to canonical AnalystOS schema names.
-    Also auto-derives missing financial columns when constituent inputs exist.
+    Safely handles arbitrary schema structures and auto-derives missing financial columns
+    when constituent inputs exist.
 
     Returns:
     - (normalized_df, mapping_report)
@@ -71,13 +93,13 @@ def normalize_dataset_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str,
     existing_cols = list(df_norm.columns)
     mapping_applied: Dict[str, str] = {}
 
-    # Build lookup map of cleaned column names
+    # Build lookup map of cleaned column names (strip non-alphanumeric, lower)
     col_cleaned = {
         re.sub(r"[^a-z0-9]", "", str(c).lower()): c
         for c in existing_cols
     }
 
-    # Match aliases
+    # Match aliases to canonical names
     for canonical_name, aliases in COLUMN_ALIASES.items():
         if canonical_name in df_norm.columns:
             continue  # Already canonical
@@ -88,37 +110,183 @@ def normalize_dataset_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str,
                 orig_col = col_cleaned[clean_alias]
                 df_norm.rename(columns={orig_col: canonical_name}, inplace=True)
                 mapping_applied[orig_col] = canonical_name
-                # Remove matched column from lookup so it isn't matched twice
                 del col_cleaned[clean_alias]
                 break
 
+    # Coerce numeric fields if present as strings
+    for num_col in ["Revenue", "Cost", "Profit", "Quantity", "Unit Price", "Unit Cost"]:
+        if num_col in df_norm.columns and not pd.api.types.is_numeric_dtype(df_norm[num_col]):
+            coerced = _coerce_numeric_series(df_norm[num_col])
+            if coerced.notna().sum() > 0:
+                df_norm[num_col] = coerced
+
     # Auto-derive Revenue if missing but Quantity and Unit Price exist
     if "Revenue" not in df_norm.columns and "Quantity" in df_norm.columns and "Unit Price" in df_norm.columns:
-        if pd.api.types.is_numeric_dtype(df_norm["Quantity"]) and pd.api.types.is_numeric_dtype(df_norm["Unit Price"]):
-            df_norm["Revenue"] = (df_norm["Quantity"] * df_norm["Unit Price"]).round(2)
+        qty_num = _coerce_numeric_series(df_norm["Quantity"])
+        price_num = _coerce_numeric_series(df_norm["Unit Price"])
+        if qty_num.notna().sum() > 0 and price_num.notna().sum() > 0:
+            df_norm["Quantity"] = qty_num
+            df_norm["Unit Price"] = price_num
+            df_norm["Revenue"] = (qty_num * price_num).round(2)
             mapping_applied["[Derived]"] = "Revenue = Quantity * Unit Price"
 
     # Auto-derive Cost if missing but Quantity and Unit Cost exist
     if "Cost" not in df_norm.columns and "Quantity" in df_norm.columns and "Unit Cost" in df_norm.columns:
-        if pd.api.types.is_numeric_dtype(df_norm["Quantity"]) and pd.api.types.is_numeric_dtype(df_norm["Unit Cost"]):
-            df_norm["Cost"] = (df_norm["Quantity"] * df_norm["Unit Cost"]).round(2)
+        qty_num = _coerce_numeric_series(df_norm["Quantity"])
+        cost_num = _coerce_numeric_series(df_norm["Unit Cost"])
+        if qty_num.notna().sum() > 0 and cost_num.notna().sum() > 0:
+            df_norm["Quantity"] = qty_num
+            df_norm["Unit Cost"] = cost_num
+            df_norm["Cost"] = (qty_num * cost_num).round(2)
             mapping_applied["[Derived]"] = "Cost = Quantity * Unit Cost"
 
     # Auto-derive Profit if missing but Revenue and Cost exist
     if "Profit" not in df_norm.columns and "Revenue" in df_norm.columns and "Cost" in df_norm.columns:
-        if pd.api.types.is_numeric_dtype(df_norm["Revenue"]) and pd.api.types.is_numeric_dtype(df_norm["Cost"]):
-            df_norm["Profit"] = (df_norm["Revenue"] - df_norm["Cost"]).round(2)
+        rev_num = _coerce_numeric_series(df_norm["Revenue"])
+        cost_num = _coerce_numeric_series(df_norm["Cost"])
+        if rev_num.notna().sum() > 0 and cost_num.notna().sum() > 0:
+            df_norm["Revenue"] = rev_num
+            df_norm["Cost"] = cost_num
+            df_norm["Profit"] = (rev_num - cost_num).round(2)
             mapping_applied["[Derived]"] = "Profit = Revenue - Cost"
 
     # If Product Name is missing but Product ID is present, populate Product Name
     if "Product Name" not in df_norm.columns and "Product ID" in df_norm.columns:
         df_norm["Product Name"] = df_norm["Product ID"].astype(str)
 
-    # If Order ID is missing, generate synthetic sequential identifiers
-    if "Order ID" not in df_norm.columns:
-        df_norm["Order ID"] = [f"ORD-{10001 + i}" for i in range(len(df_norm))]
-
     return df_norm, mapping_applied
+
+
+def detect_dataset_columns(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Inspect columns of an uploaded DataFrame, categorizing each by data type
+    and inferring potential analytical roles (Revenue, Quantity, Date, Category, etc.).
+    """
+    if df is None or df.empty:
+        return {"columns": {}, "inferred_roles": {}}
+
+    detected = {}
+    inferred_roles = {}
+
+    for col in df.columns:
+        series = df[col]
+        dtype_str = str(series.dtype)
+        is_num = pd.api.types.is_numeric_dtype(series)
+        is_date = pd.api.types.is_datetime64_any_dtype(series)
+        unique_cnt = int(series.nunique())
+        null_cnt = int(series.isna().sum())
+
+        # Check if text column can be parsed as dates
+        if not is_num and not is_date and unique_cnt > 0:
+            sample_non_null = series.dropna().head(10).astype(str)
+            date_matches = 0
+            for val in sample_non_null:
+                val_clean = val.strip()
+                if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", val_clean) or re.match(r"^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", val_clean):
+                    date_matches += 1
+            if date_matches >= max(1, len(sample_non_null) * 0.7):
+                is_date = True
+
+        # Inferred broad data type
+        if is_date:
+            col_type = "Date / Time"
+        elif is_num:
+            col_type = "Numeric"
+        elif unique_cnt <= 60 or unique_cnt <= max(5, len(df) * 0.05):
+            col_type = "Categorical"
+        elif unique_cnt >= len(df) * 0.85:
+            col_type = "Identifier"
+        else:
+            col_type = "Text"
+
+        # Determine matched role if any
+        matched_role = None
+        cleaned_name = re.sub(r"[^a-z0-9]", "", str(col).lower())
+        for canonical, aliases in COLUMN_ALIASES.items():
+            if col == canonical:
+                matched_role = canonical
+                break
+            for a in aliases:
+                if cleaned_name == re.sub(r"[^a-z0-9]", "", a.lower()):
+                    matched_role = canonical
+                    break
+            if matched_role:
+                break
+
+        if not matched_role:
+            if is_date:
+                matched_role = "Order Date (Suggested)"
+            elif is_num and any(w in cleaned_name for w in ["rev", "sale", "amt", "price", "val", "spend", "cost", "total", "fee", "bill"]):
+                matched_role = "Financial Metric (Suggested)"
+
+        samples = [str(v) for v in series.dropna().head(3).tolist()]
+
+        detected[col] = {
+            "type": col_type,
+            "dtype": dtype_str,
+            "unique_count": unique_cnt,
+            "null_count": null_cnt,
+            "samples": samples,
+            "inferred_role": matched_role or "General Field"
+        }
+        if matched_role:
+            inferred_roles[matched_role] = col
+
+    return {
+        "columns": detected,
+        "inferred_roles": inferred_roles
+    }
+
+
+def apply_user_column_mapping(
+    df: pd.DataFrame,
+    mapping: Dict[str, str]
+) -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Apply user-specified column mappings to canonical AnalystOS metrics.
+
+    Parameters:
+    - df: The active DataFrame.
+    - mapping: Dictionary of {canonical_role: original_column_name}.
+
+    Returns:
+    - (updated_df, changes_applied)
+    """
+    if df is None or df.empty or not mapping:
+        return df, {}
+
+    updated_df = df.copy()
+    changes = {}
+
+    for canonical_name, orig_col in mapping.items():
+        if orig_col and orig_col in updated_df.columns and orig_col != canonical_name:
+            if canonical_name in updated_df.columns:
+                updated_df.drop(columns=[canonical_name], inplace=True)
+            updated_df.rename(columns={orig_col: canonical_name}, inplace=True)
+            changes[orig_col] = canonical_name
+
+    # Coerce mapped numeric fields
+    for col in ["Revenue", "Quantity", "Unit Price", "Cost", "Profit", "Unit Cost"]:
+        if col in updated_df.columns:
+            updated_df[col] = _coerce_numeric_series(updated_df[col])
+
+    # Auto-derive Revenue if Quantity and Unit Price are mapped but Revenue is not
+    if "Revenue" not in updated_df.columns and "Quantity" in updated_df.columns and "Unit Price" in updated_df.columns:
+        qty_num = _coerce_numeric_series(updated_df["Quantity"])
+        price_num = _coerce_numeric_series(updated_df["Unit Price"])
+        if qty_num.notna().sum() > 0 and price_num.notna().sum() > 0:
+            updated_df["Revenue"] = (qty_num * price_num).round(2)
+            changes["[Derived]"] = "Revenue = Quantity * Unit Price"
+
+    # Auto-derive Profit if Revenue and Cost are present but Profit is not
+    if "Profit" not in updated_df.columns and "Revenue" in updated_df.columns and "Cost" in updated_df.columns:
+        rev_num = _coerce_numeric_series(updated_df["Revenue"])
+        cost_num = _coerce_numeric_series(updated_df["Cost"])
+        if rev_num.notna().sum() > 0 and cost_num.notna().sum() > 0:
+            updated_df["Profit"] = (rev_num - cost_num).round(2)
+            changes["[Derived]"] = "Profit = Revenue - Cost"
+
+    return updated_df, changes
 
 
 def read_csv_with_encoding_fallbacks(

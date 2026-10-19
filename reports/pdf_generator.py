@@ -287,14 +287,22 @@ def _create_reportlab_investigation_pdf(
     story.append(Paragraph("4. Core Business KPIs & Baseline", h1_style))
     if investigation_result and getattr(investigation_result, "analytics_result", None):
         kpis = investigation_result.analytics_result.kpis
+        has_rev = kpis.get("has_revenue", True)
+        has_prof = kpis.get("has_profit", True)
+        rev_val = f"${kpis.get('total_revenue', 0.0):,.2f}" if has_rev else "Unavailable (Unmapped)"
+        profit_val = f"${kpis.get('total_profit', 0.0):,.2f}" if has_prof else "Unavailable (Unmapped)"
+        margin_val = f"{kpis.get('profit_margin_pct', 0.0)}%" if (has_rev and has_prof) else "Unavailable"
+        aov_val = f"${kpis.get('average_order_value', 0.0):,.2f}" if has_rev else "Unavailable"
+        avg_prof_val = f"${kpis.get('average_profit_per_order', 0.0):,.2f}" if has_prof else "Unavailable"
+
         kpi_table_data = [
             ["Metric Name", "Calculated Baseline", "Strategic Significance"],
-            ["Total Revenue", f"${kpis.get('total_revenue', 0.0):,.2f}", "Top-line gross sales volume"],
-            ["Total Net Profit", f"${kpis.get('total_profit', 0.0):,.2f}", "Bottom-line realized return"],
-            ["Blended Profit Margin", f"{kpis.get('profit_margin_pct', 0.0)}%", "Enterprise financial efficiency"],
+            ["Total Revenue", rev_val, "Top-line gross sales volume"],
+            ["Total Net Profit", profit_val, "Bottom-line realized return"],
+            ["Blended Profit Margin", margin_val, "Enterprise financial efficiency"],
             ["Total Orders", f"{kpis.get('total_orders', 0):,}", "Unique transaction volume"],
-            ["Average Order Value (AOV)", f"${kpis.get('average_order_value', 0.0):,.2f}", "Revenue per transaction"],
-            ["Average Profit Per Order", f"${kpis.get('average_profit_per_order', 0.0):,.2f}", "Net contribution per order"],
+            ["Average Order Value (AOV)", aov_val, "Revenue per transaction"],
+            ["Average Profit Per Order", avg_prof_val, "Net contribution per order"],
         ]
         kpi_table = Table(kpi_table_data, colWidths=[160, 140, 200])
         kpi_table.setStyle(TableStyle([
@@ -468,13 +476,20 @@ def _create_reportlab_dashboard_pdf(
     kpis = analytics_results.get("kpis", {})
     if kpis:
         story.append(Paragraph("Financial Baseline KPIs", h1_style))
+        has_rev = kpis.get("has_revenue", True)
+        has_prof = kpis.get("has_profit", True)
+        rev_val = f"${kpis.get('total_revenue', 0.0):,.2f}" if has_rev else "Unavailable (Unmapped)"
+        profit_val = f"${kpis.get('total_profit', 0.0):,.2f}" if has_prof else "Unavailable (Unmapped)"
+        margin_val = f"{kpis.get('profit_margin_pct', 0.0)}%" if (has_rev and has_prof) else "Unavailable"
+        aov_val = f"${kpis.get('average_order_value', 0.0):,.2f}" if has_rev else "Unavailable"
+
         kpi_data = [
             ["Metric", "Value", "Operational Description"],
-            ["Total Revenue", f"${kpis.get('total_revenue', 0.0):,.2f}", "Total gross turnover"],
-            ["Total Net Profit", f"${kpis.get('total_profit', 0.0):,.2f}", "Bottom line net earnings"],
-            ["Profit Margin", f"{kpis.get('profit_margin_pct', 0.0)}%", "Net profit percentage"],
+            ["Total Revenue", rev_val, "Total gross turnover"],
+            ["Total Net Profit", profit_val, "Bottom line net earnings"],
+            ["Profit Margin", margin_val, "Net profit percentage"],
             ["Total Orders", f"{kpis.get('total_orders', 0):,}", "Order volume count"],
-            ["Average Order Value", f"${kpis.get('average_order_value', 0.0):,.2f}", "Average spend per checkout"]
+            ["Average Order Value", aov_val, "Average spend per checkout"]
         ]
         kpi_table = Table(kpi_data, colWidths=[150, 150, 200])
         kpi_table.setStyle(TableStyle([
