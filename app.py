@@ -6,22 +6,50 @@ Streamlit Application Entry Point.
 
 from __future__ import annotations
 import os
+import uuid
 import streamlit as st
 import pandas as pd
 
-from tools.data_tools import load_csv
-from data.data_generator import generate_ecommerce_dataset
+from tools.ingest import (
+    DatasetArtifact,
+    get_synthetic_artifact,
+    load_file_artifact,
+)
 from workflow.orchestrator import MultiAgentOrchestrator
 from ui.components import apply_custom_styles
 from ui.views import (
-    render_overview_view,
-    render_data_management_view,
-    render_investigation_view,
+    render_home_view,
+    render_data_workspace_view,
+    render_ai_investigator_view,
     render_analytics_dashboard_view,
-    render_workflow_inspector_view,
-    render_final_report_view,
-    render_export_view,
+    render_reports_view,
+    render_investigation_history_view,
+    render_about_view,
+    KEY_ACTIVE_ARTIFACT,
+    KEY_CHAT_HISTORY,
+    KEY_INVESTIGATION_RESULT,
+    KEY_INVESTIGATION_HISTORY,
+    KEY_CURRENT_INV_ID,
+    KEY_CHART_SPECS,
+    KEY_REPORT_BYTES,
+    KEY_LLM_API_KEY,
+    KEY_NAV_SELECTION,
 )
+
+
+def reset_investigation():
+    """Clear only investigation state, preserve dataset and config."""
+    keys_to_clear = [
+        KEY_CHAT_HISTORY,
+        KEY_INVESTIGATION_RESULT,
+        KEY_CURRENT_INV_ID,
+        KEY_CHART_SPECS,
+        KEY_REPORT_BYTES,
+    ]
+    for k in keys_to_clear:
+        if k in st.session_state:
+            del st.session_state[k]
+    st.session_state[KEY_CURRENT_INV_ID] = str(uuid.uuid4())
 
 
 def init_session_state():
@@ -29,34 +57,32 @@ def init_session_state():
     if "orchestrator" not in st.session_state:
         st.session_state["orchestrator"] = MultiAgentOrchestrator()
 
-    if "dataset" not in st.session_state:
-        # Load pre-generated synthetic dataset if available, otherwise generate
-        csv_path = os.path.join(os.path.dirname(__file__), "data", "synthetic_sales.csv")
-        if os.path.exists(csv_path):
-            try:
-                st.session_state["dataset"] = load_csv(csv_path)
-                st.session_state["dataset_source"] = f"Synthetic Benchmark ({len(st.session_state['dataset']):,} records)"
-            except Exception:
-                st.session_state["dataset"] = generate_ecommerce_dataset(num_records=3000, seed=42)
-                st.session_state["dataset_source"] = "Synthetic E-Commerce (3,000 records)"
-        else:
-            st.session_state["dataset"] = generate_ecommerce_dataset(num_records=3000, seed=42, output_path=csv_path)
-            st.session_state["dataset_source"] = "Synthetic E-Commerce (3,000 records)"
+    if KEY_CURRENT_INV_ID not in st.session_state:
+        st.session_state[KEY_CURRENT_INV_ID] = str(uuid.uuid4())
 
-    if "investigation_result" not in st.session_state:
-        st.session_state["investigation_result"] = None
+    if KEY_CHAT_HISTORY not in st.session_state:
+        st.session_state[KEY_CHAT_HISTORY] = []
 
-    if "question_input" not in st.session_state:
-        st.session_state["question_input"] = (
-            "Why did our profits decrease, which products or regions contributed most to the decline, "
-            "and what actions should we take?"
-        )
+    if KEY_INVESTIGATION_HISTORY not in st.session_state:
+        st.session_state[KEY_INVESTIGATION_HISTORY] = []
+
+    if KEY_INVESTIGATION_RESULT not in st.session_state:
+        st.session_state[KEY_INVESTIGATION_RESULT] = None
+
+    if KEY_NAV_SELECTION not in st.session_state:
+        st.session_state[KEY_NAV_SELECTION] = "Home"
+
+    if KEY_ACTIVE_ARTIFACT not in st.session_state:
+        # Load default synthetic sales benchmark
+        synth_artifact = get_synthetic_artifact(num_records=3000, seed=42)
+        st.session_state[KEY_ACTIVE_ARTIFACT] = synth_artifact
+        st.session_state["dataset"] = synth_artifact.dataframe
+        st.session_state["dataset_source"] = f"Synthetic Benchmark ({len(synth_artifact.dataframe):,} records)"
 
 
 def main():
     st.set_page_config(
-        page_title="AnalystOS — Multi-Agent Business Investigation System",
-        page_icon="📈",
+        page_title="AnalystOS — Business Investigation System",
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -65,78 +91,93 @@ def main():
     init_session_state()
 
     orchestrator: MultiAgentOrchestrator = st.session_state["orchestrator"]
-    df: pd.DataFrame = st.session_state.get("dataset", None)
-    result = st.session_state.get("investigation_result", None)
+    artifact: DatasetArtifact = st.session_state.get(KEY_ACTIVE_ARTIFACT, None)
+    df: Optional[pd.DataFrame] = artifact.dataframe if artifact else None
+    result = st.session_state.get(KEY_INVESTIGATION_RESULT, None)
 
-    # Sidebar Navigation & Context
+    nav_options = [
+        "Home",
+        "Data Workspace",
+        "AI Investigator",
+        "Analytics Dashboard",
+        "Reports",
+        "Investigation History",
+        "About & Architecture",
+    ]
+
+    # Sidebar Navigation & Settings
     with st.sidebar:
-        st.markdown("## 📈 AnalystOS")
-        st.markdown("**Multi-Agent Business Investigation**")
-        st.caption("College Placement Project • AI Business Intelligence")
+        st.markdown("## AnalystOS")
+        st.markdown("**Enterprise Business Intelligence**")
+        st.caption("Autonomous Multi-Agent Analytical System")
         st.markdown("---")
+
+        current_nav = st.session_state.get(KEY_NAV_SELECTION, "Home")
+        if current_nav not in nav_options:
+            current_nav = "Home"
 
         nav_choice = st.radio(
             "System Navigation:",
-            [
-                "📊 Overview",
-                "📁 Data Management",
-                "🔍 Business Investigation",
-                "📈 Analytics Dashboard",
-                "🤖 Multi-Agent Workflow",
-                "📑 Final Investigation Report",
-                "💾 Export Center",
-            ],
-            index=0
+            nav_options,
+            index=nav_options.index(current_nav),
+            key="sidebar_nav_radio"
         )
+        if nav_choice != current_nav:
+            st.session_state[KEY_NAV_SELECTION] = nav_choice
 
         st.markdown("---")
-        st.markdown("### 📋 Active Dataset Status")
-        if df is not None and not df.empty:
-            st.markdown(f"**Source:** `{st.session_state.get('dataset_source', 'Default')}`")
+        st.markdown("### Active Dataset Status")
+        if artifact is not None and df is not None and not df.empty:
+            st.markdown(f"**Source:** `{artifact.filename}`")
+            st.markdown(f"**Format:** `{artifact.source_type.upper()}`")
             st.markdown(f"**Rows:** `{len(df):,}` | **Cols:** `{len(df.columns)}`")
             if "Revenue" in df.columns:
                 st.markdown(f"**Total GMV:** `${df['Revenue'].sum():,.0f}`")
+        elif artifact is not None:
+            st.markdown(f"**Source:** `{artifact.filename}` ({artifact.source_type.upper()})")
+            if artifact.page_count:
+                st.markdown(f"**Pages:** `{artifact.page_count}`")
         else:
             st.markdown("*No active dataset loaded.*")
 
         st.markdown("---")
-        st.markdown("### 📤 Quick CSV Upload")
+        st.markdown("### Quick File Ingestion")
         sidebar_file = st.file_uploader(
-            "Drop your CSV here (Max 50MB):",
-            type=["csv"],
-            key="sidebar_quick_csv_uploader",
-            help="Upload a custom transaction CSV to immediately analyze it across all agents."
+            "Upload File (Max 50MB):",
+            type=["csv", "xlsx", "xls", "json", "parquet", "tsv", "txt", "pdf"],
+            key="sidebar_quick_file_uploader",
+            help="Ingest a custom dataset or document to analyze it across all agents."
         )
         if sidebar_file is not None:
             file_mb = sidebar_file.size / (1024 * 1024)
             if file_mb > 50.0:
                 st.sidebar.error("File exceeds 50MB limit.")
             else:
-                curr_src = st.session_state.get("dataset_source", "")
-                if sidebar_file.name not in curr_src:
+                curr_name = artifact.filename if artifact else ""
+                if sidebar_file.name != curr_name:
                     try:
-                        df_up = load_csv(sidebar_file, auto_normalize=True)
-                        st.session_state["dataset"] = df_up
-                        st.session_state["dataset_source"] = f"Uploaded CSV: {sidebar_file.name}"
-                        st.session_state["investigation_result"] = None
+                        new_artifact = load_file_artifact(sidebar_file, filename=sidebar_file.name)
+                        st.session_state[KEY_ACTIVE_ARTIFACT] = new_artifact
+                        if new_artifact.dataframe is not None:
+                            st.session_state["dataset"] = new_artifact.dataframe
+                            st.session_state["dataset_source"] = f"{sidebar_file.name} ({len(new_artifact.dataframe):,} records)"
+                        reset_investigation()
                         st.sidebar.success(f"Loaded {sidebar_file.name}!")
                         st.rerun()
                     except Exception as ex:
-                        st.sidebar.error(f"Upload failed: {str(ex)}")
+                        st.sidebar.error(f"Ingestion failed: {str(ex)}")
 
-        if "Uploaded CSV" in st.session_state.get("dataset_source", ""):
-            if st.button("⚙️ Switch to Synthetic Benchmark", use_container_width=True):
-                csv_path = os.path.join(os.path.dirname(__file__), "data", "synthetic_sales.csv")
-                if os.path.exists(csv_path):
-                    st.session_state["dataset"] = load_csv(csv_path, auto_normalize=True)
-                else:
-                    st.session_state["dataset"] = generate_ecommerce_dataset(num_records=3000, seed=42)
-                st.session_state["dataset_source"] = "Synthetic Benchmark (3,000 records)"
-                st.session_state["investigation_result"] = None
+        if artifact and artifact.source_type != "synthetic":
+            if st.button("Switch to Synthetic Benchmark", use_container_width=True):
+                synth_art = get_synthetic_artifact(num_records=3000, seed=42)
+                st.session_state[KEY_ACTIVE_ARTIFACT] = synth_art
+                st.session_state["dataset"] = synth_art.dataframe
+                st.session_state["dataset_source"] = f"Synthetic Benchmark ({len(synth_art.dataframe):,} records)"
+                reset_investigation()
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("### 🤖 Agent Pipeline Status")
+        st.markdown("### Agent Pipeline Status")
         agent_names = [
             "Data Reliability Agent",
             "Planning Agent",
@@ -150,67 +191,62 @@ def main():
             rec = result.agent_records.get(name) if result and result.agent_records else None
             status = rec.status.value if rec else "IDLE"
             if status == "COMPLETED":
-                icon = "🟢"
+                tag = "[Completed]"
             elif status == "RUNNING":
-                icon = "🟡"
+                tag = "[Running]"
             elif status == "FAILED":
-                icon = "🔴"
+                tag = "[Failed]"
             else:
-                icon = "⚪"
-            st.markdown(f"{icon} <small>**{name}**</small>", unsafe_allow_html=True)
+                tag = "[Idle]"
+            st.markdown(f"**{tag}** <small>{name}</small>", unsafe_allow_html=True)
 
         st.markdown("---")
-        with st.expander("🔑 AI Engine & Model Settings", expanded=False):
+        with st.expander("Settings & API Key Configuration", expanded=False):
             from llm.client import LLMClient
             probe_client = LLMClient()
             if probe_client.is_configured:
-                st.success(f"🟢 **Live AI Active!**\nProvider: `{probe_client.provider.title()}` · Model: `{probe_client.model}`")
+                st.success(f"Live AI Active: Provider {probe_client.provider.title()} ({probe_client.model})")
             else:
-                st.info("🔵 **Offline Mode** — Deterministic analytical engine\n(100% Free, no API key needed)")
+                st.info("Offline Mode: Deterministic analytical engine active (no API key required).")
 
             custom_key = st.text_input(
-                "Gemini / OpenAI / Groq API Key (Optional):",
+                "API Key (Gemini / OpenAI / Groq):",
                 type="password",
-                value=st.session_state.get("custom_llm_api_key", ""),
-                help="Paste your key here. Gemini keys (aistudio.google.com) are free. OpenAI keys start with sk-. Groq keys start with gsk_."
+                value=st.session_state.get(KEY_LLM_API_KEY, st.session_state.get("custom_llm_api_key", "")),
+                help="Gemini keys (aistudio.google.com) are free. OpenAI keys start with sk-. Groq keys start with gsk_."
             )
-            if custom_key != st.session_state.get("custom_llm_api_key", ""):
+            if custom_key != st.session_state.get(KEY_LLM_API_KEY, ""):
+                st.session_state[KEY_LLM_API_KEY] = custom_key
                 st.session_state["custom_llm_api_key"] = custom_key
                 st.rerun()
 
-            if custom_key:
-                st.caption("✅ Key saved — auto-detecting provider from key prefix.")
-            else:
-                st.caption("💡 Get a free Gemini key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)")
-
-
         st.markdown("---")
-        if st.button("🔄 Reset Investigation", use_container_width=True):
-            st.session_state["investigation_result"] = None
+        if st.button("Reset Investigation State", use_container_width=True):
+            reset_investigation()
             st.rerun()
 
         st.markdown(
             "<div style='font-size: 0.72rem; color: #94A3B8; text-align: center; margin-top: 1rem;'>"
-            "Deterministic Multi-Agent Architecture<br>100% Offline • Zero LLM Cost"
+            "Deterministic Multi-Agent Architecture<br>Offline-First Analytical Engine"
             "</div>",
             unsafe_allow_html=True
         )
 
     # Route navigation view
-    if nav_choice == "📊 Overview":
-        render_overview_view(df)
-    elif nav_choice == "📁 Data Management":
-        render_data_management_view()
-    elif nav_choice == "🔍 Business Investigation":
-        render_investigation_view(orchestrator)
-    elif nav_choice == "📈 Analytics Dashboard":
-        render_analytics_dashboard_view(df)
-    elif nav_choice == "🤖 Multi-Agent Workflow":
-        render_workflow_inspector_view(result)
-    elif nav_choice == "📑 Final Investigation Report":
-        render_final_report_view(result)
-    elif nav_choice == "💾 Export Center":
-        render_export_view(result, df)
+    if nav_choice == "Home":
+        render_home_view(orchestrator)
+    elif nav_choice == "Data Workspace":
+        render_data_workspace_view()
+    elif nav_choice == "AI Investigator":
+        render_ai_investigator_view(orchestrator)
+    elif nav_choice == "Analytics Dashboard":
+        render_analytics_dashboard_view()
+    elif nav_choice == "Reports":
+        render_reports_view()
+    elif nav_choice == "Investigation History":
+        render_investigation_history_view()
+    elif nav_choice == "About & Architecture":
+        render_about_view()
 
 
 if __name__ == "__main__":
