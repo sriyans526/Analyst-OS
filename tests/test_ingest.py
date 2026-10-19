@@ -181,3 +181,35 @@ def test_uploaded_dataset_analytical_readiness():
     assert kpis["total_profit"] == 400.0
     assert kpis["total_orders"] == 2
 
+
+def test_load_csv_artifact_cp1252_encoding():
+    """Verify load_csv_artifact handles CP1252 with byte 0xa0 and stores detected encoding."""
+    raw_cp1252 = "Order ID,Category,Revenue\nORD-1,Laptops\xa0& Accessories,1200.0\n".encode("cp1252")
+    artifact = load_csv_artifact(io.BytesIO(raw_cp1252), filename="sales_cp1252.csv")
+    assert artifact.dataframe is not None
+    assert len(artifact.dataframe) == 1
+    assert "Laptops\xa0& Accessories" in artifact.dataframe.iloc[0]["Category"]
+    assert artifact.metadata.get("encoding") in ["cp1252", "latin-1", "iso-8859-1"]
+    assert len(artifact.errors) == 0
+
+
+def test_load_csv_artifact_utf8_sig():
+    """Verify load_csv_artifact handles UTF-8 with BOM."""
+    raw_bom = b"\xef\xbb\xbfOrder ID,Category,Revenue\nORD-1,Electronics,850.0\n"
+    artifact = load_csv_artifact(io.BytesIO(raw_bom), filename="sales_bom.csv")
+    assert artifact.dataframe is not None
+    assert "Order ID" in artifact.dataframe.columns
+    assert artifact.dataframe.iloc[0]["Revenue"] == 850.0
+    assert len(artifact.errors) == 0
+
+
+def test_load_csv_artifact_semicolon():
+    """Verify load_csv_artifact autodetects semicolon delimiters."""
+    raw_semi = "Order ID;Category;Revenue;Profit\nORD-1;Furniture;500;120\n".encode("utf-8")
+    artifact = load_csv_artifact(io.BytesIO(raw_semi), filename="sales_semi.csv")
+    assert artifact.dataframe is not None
+    assert len(artifact.dataframe.columns) == 4
+    assert "Order ID" in artifact.dataframe.columns
+    assert artifact.dataframe.iloc[0]["Revenue"] == 500
+
+

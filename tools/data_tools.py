@@ -7,6 +7,7 @@ duplicate checking, missing value detection, and date validation.
 
 from __future__ import annotations
 import io
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 import pandas as pd
@@ -120,13 +121,146 @@ def normalize_dataset_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str,
     return df_norm, mapping_applied
 
 
+def read_csv_with_encoding_fallbacks(
+    file_or_buffer: Any,
+    max_rows: Optional[int] = None,
+    default_sep: Optional[str] = None
+) -> Tuple[pd.DataFrame, str]:
+    """
+    Robustly read a CSV or delimited text file/buffer using multi-encoding fallback
+    and delimiter autodetection.
+
+    Encoding hierarchy:
+    1. utf-8
+    2. utf-8-sig (handles UTF-8 with BOM without corrupting column headers)
+    3. cp1252 (Windows-1252 Western - standard for Windows Excel CSV exports, handles byte 0xa0)
+    4. Auto-detected encoding via charset_normalizer (if installed and detected)
+    5. latin-1 / iso-8859-1 (as fallback to preserve byte fidelity without replacing)
+
+    Parameters:
+    - file_or_buffer: Filepath, bytes, io.BytesIO, io.StringIO, or Streamlit UploadedFile.
+    - max_rows: Maximum rows to read.
+    - default_sep: Predefined separator (e.g. '\t' for TSV). If None, auto-detects commas,
+      semicolons, tabs, and pipes.
+
+    Returns:
+    - (DataFrame, successful_encoding_name)
+
+    Raises:
+    - ValueError: If the file is empty, corrupted, or unreadable across all encodings.
+    """
+    if isinstance(file_or_buffer, io.StringIO):
+        content = file_or_buffer.getvalue()
+        if not content.strip():
+            raise ValueError("The provided CSV file contains no records (empty dataset).")
+        read_kwargs = {"nrows": max_rows}
+        if default_sep is not None:
+            read_kwargs["sep"] = default_sep
+        df = pd.read_csv(io.StringIO(content), **read_kwargs)
+        if default_sep is None and len(df.columns) == 1:
+            first_col = str(df.columns[0])
+            if ";" in first_col or "\t" in first_col or "|" in first_col:
+                df = pd.read_csv(io.StringIO(content), sep=None, engine="python", nrows=max_rows)
+        return df, "utf-8"
+
+    # Extract raw bytes safely from any buffer or path
+    raw_bytes: bytes = b""
+    if isinstance(file_or_buffer, bytes):
+        raw_bytes = file_or_buffer
+    elif isinstance(file_or_buffer, str):
+        if os.path.exists(file_or_buffer):
+            with open(file_or_buffer, "rb") as f:
+                raw_bytes = f.read()
+        else:
+            raw_bytes = file_or_buffer.encode("utf-8", errors="replace")
+    elif hasattr(file_or_buffer, "getvalue"):
+        val = file_or_buffer.getvalue()
+        raw_bytes = val.encode("utf-8", errors="replace") if isinstance(val, str) else val
+    elif hasattr(file_or_buffer, "read"):
+        if hasattr(file_or_buffer, "seek"):
+            file_or_buffer.seek(0)
+        read_val = file_or_buffer.read()
+        raw_bytes = read_val.encode("utf-8", errors="replace") if isinstance(read_val, str) else read_val
+        if hasattr(file_or_buffer, "seek"):
+            file_or_buffer.seek(0)
+    else:
+        raise ValueError("Unsupported input format for CSV ingestion.")
+
+    if not raw_bytes or not raw_bytes.strip():
+        raise ValueError("The provided CSV file contains no records (empty dataset).")
+
+    # Strict encoding priority order
+    candidate_encodings = ["utf-8", "utf-8-sig", "cp1252"]
+
+    # Auto-detect via charset_normalizer if available
+    try:
+        import charset_normalizer
+        sample = raw_bytes[:131072]
+        match = charset_normalizer.from_bytes(sample).best()
+        if match and match.encoding:
+            det = match.encoding.lower()
+            if det not in [e.lower() for e in candidate_encodings]:
+                candidate_encodings.append(det)
+    except Exception:
+        pass
+
+    # Latin-1 as final fallback to preserve byte fidelity
+    if "latin-1" not in [e.lower() for e in candidate_encodings]:
+        candidate_encodings.append("latin-1")
+    if "iso-8859-1" not in [e.lower() for e in candidate_encodings]:
+        candidate_encodings.append("iso-8859-1")
+
+    last_error = None
+    for enc in candidate_encodings:
+        try:
+            buf = io.BytesIO(raw_bytes)
+            read_kwargs = {"encoding": enc, "nrows": max_rows}
+            if default_sep is not None:
+                read_kwargs["sep"] = default_sep
+            df = pd.read_csv(buf, **read_kwargs)
+
+            # Autodetect non-comma delimiter if single fused column detected
+            if default_sep is None and len(df.columns) == 1:
+                first_col = str(df.columns[0])
+                if ";" in first_col or "\t" in first_col or "|" in first_col:
+                    buf.seek(0)
+                    df = pd.read_csv(buf, encoding=enc, sep=None, engine="python", nrows=max_rows)
+
+            if df.empty:
+                raise ValueError("The provided CSV file contains no records (empty dataset).")
+
+            return df, enc
+        except (UnicodeDecodeError, UnicodeError) as ue:
+            last_error = ue
+            continue
+        except pd.errors.EmptyDataError:
+            raise ValueError("The provided CSV file is empty (contains no columns or records).")
+        except Exception as ex:
+            if default_sep is None:
+                try:
+                    buf = io.BytesIO(raw_bytes)
+                    df = pd.read_csv(buf, encoding=enc, sep=None, engine="python", nrows=max_rows)
+                    if not df.empty:
+                        return df, enc
+                except Exception:
+                    pass
+            last_error = ex
+            continue
+
+    raise ValueError(
+        f"Unable to read CSV across supported encodings ({', '.join(candidate_encodings[:3])}, latin-1). "
+        f"Please verify the file is a text CSV. Error: {str(last_error)}"
+    )
+
+
 def load_csv(
     file_or_path: Union[str, io.BytesIO, io.StringIO, Any],
     max_rows: int = 500000,
     auto_normalize: bool = True
 ) -> pd.DataFrame:
     """
-    Safely load a CSV file into a pandas DataFrame with automatic column normalization.
+    Safely load a CSV file into a pandas DataFrame with automatic column normalization
+    and multi-encoding fallback.
 
     Parameters:
     - file_or_path: File path or file-like buffer (e.g. from Streamlit file_uploader).
@@ -140,14 +274,7 @@ def load_csv(
     - ValueError: If file cannot be read, exceeds limits, or is empty.
     """
     try:
-        if isinstance(file_or_path, str):
-            df = pd.read_csv(file_or_path, nrows=max_rows)
-        else:
-            # File-like object (e.g. UploadedFile)
-            df = pd.read_csv(file_or_path, nrows=max_rows)
-
-        if df.empty:
-            raise ValueError("The provided CSV file contains no records (empty dataset).")
+        df, _ = read_csv_with_encoding_fallbacks(file_or_path, max_rows=max_rows)
 
         # Strip whitespace from column headers
         df.columns = [str(col).strip() for col in df.columns]

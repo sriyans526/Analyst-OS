@@ -41,6 +41,44 @@ def test_load_csv_empty_raises_error():
         load_csv(empty_buffer)
 
 
+def test_load_csv_utf8_with_bom():
+    """Verify UTF-8 with BOM bytes load cleanly without BOM prefix in column names."""
+    bom_csv = b"\xef\xbb\xbfOrder ID,Product,Revenue,Profit\nORD-1,Widget,100,40\n"
+    df = load_csv(io.BytesIO(bom_csv))
+    assert len(df) == 1
+    assert "Order ID" in df.columns
+    assert df.iloc[0]["Product Name"] == "Widget"
+
+
+def test_load_csv_cp1252_with_byte_a0():
+    """Verify Windows-1252 encoding with byte 0xa0 (non-breaking space) decodes properly."""
+    # byte 0xa0 is non-breaking space in Windows-1252 / ISO-8859-1
+    cp1252_csv = "Order ID,Product,Revenue,Profit\nORD-1,Pro\xa0Keyboard,120,50\n".encode("cp1252")
+    df = load_csv(io.BytesIO(cp1252_csv))
+    assert len(df) == 1
+    assert "Order ID" in df.columns
+    assert "Pro\xa0Keyboard" in df.iloc[0]["Product Name"]
+
+
+def test_load_csv_semicolon_delimited():
+    """Verify semicolon-delimited CSV files are parsed into proper columns."""
+    semi_csv = "Order ID;Product;Revenue;Cost;Profit\nORD-1;Monitor;300;200;100\n".encode("utf-8")
+    df = load_csv(io.BytesIO(semi_csv))
+    assert len(df.columns) == 5
+    assert "Order ID" in df.columns
+    assert "Revenue" in df.columns
+    assert df.iloc[0]["Revenue"] == 300
+
+
+def test_load_csv_tab_delimited():
+    """Verify tab-delimited files are automatically handled."""
+    tab_csv = "Order ID\tProduct\tRevenue\tProfit\nORD-1\tDesk\t400\t150\n".encode("utf-8")
+    df = load_csv(io.BytesIO(tab_csv))
+    assert len(df.columns) >= 3
+    assert "Order ID" in df.columns
+    assert df.iloc[0]["Profit"] == 150
+
+
 def test_normalize_dataset_columns_aliases():
     raw_df = pd.DataFrame({
         "order_id": ["TX-101", "TX-102"],

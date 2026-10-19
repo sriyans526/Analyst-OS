@@ -7,6 +7,7 @@ designed for transparent multi-agent investigation.
 
 from .data_tools import (
     load_csv,
+    read_csv_with_encoding_fallbacks,
     normalize_dataset_columns,
     inspect_schema,
     detect_missing_values,

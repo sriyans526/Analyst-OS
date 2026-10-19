@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 
-from tools.data_tools import normalize_dataset_columns, inspect_schema
+from tools.data_tools import normalize_dataset_columns, inspect_schema, read_csv_with_encoding_fallbacks
 from tools.validation_tools import validate_dataset_integrity
 from data.data_generator import generate_ecommerce_dataset
 
@@ -76,7 +76,7 @@ def load_csv_artifact(
     file_or_buffer: Union[str, io.BytesIO, io.StringIO, Any],
     filename: str = "data.csv"
 ) -> DatasetArtifact:
-    """Load a CSV file into a unified DatasetArtifact."""
+    """Load a CSV file into a unified DatasetArtifact with multi-encoding fallback."""
     source_id = str(uuid.uuid4())
     artifact = DatasetArtifact(
         source_id=source_id,
@@ -85,7 +85,7 @@ def load_csv_artifact(
     )
 
     try:
-        df = pd.read_csv(file_or_buffer)
+        df, used_enc = read_csv_with_encoding_fallbacks(file_or_buffer)
         if df.empty:
             artifact.errors.append("CSV file contains no rows or data.")
             return artifact
@@ -93,6 +93,7 @@ def load_csv_artifact(
         # Strip whitespace from columns
         df.columns = [str(c).strip() for c in df.columns]
         artifact.dataframe = df
+        artifact.metadata["encoding"] = used_enc
         return _populate_df_metadata(artifact)
     except Exception as e:
         artifact.errors.append(f"Failed to read CSV: {str(e)}")
@@ -103,7 +104,7 @@ def load_tsv_artifact(
     file_or_buffer: Union[str, io.BytesIO, io.StringIO, Any],
     filename: str = "data.tsv"
 ) -> DatasetArtifact:
-    """Load a TSV (tab-separated) file into a unified DatasetArtifact."""
+    """Load a TSV (tab-separated) file into a unified DatasetArtifact with multi-encoding fallback."""
     source_id = str(uuid.uuid4())
     artifact = DatasetArtifact(
         source_id=source_id,
@@ -112,13 +113,14 @@ def load_tsv_artifact(
     )
 
     try:
-        df = pd.read_csv(file_or_buffer, sep="\t")
+        df, used_enc = read_csv_with_encoding_fallbacks(file_or_buffer, default_sep="\t")
         if df.empty:
             artifact.errors.append("TSV file contains no rows or data.")
             return artifact
 
         df.columns = [str(c).strip() for c in df.columns]
         artifact.dataframe = df
+        artifact.metadata["encoding"] = used_enc
         return _populate_df_metadata(artifact)
     except Exception as e:
         artifact.errors.append(f"Failed to read TSV: {str(e)}")
